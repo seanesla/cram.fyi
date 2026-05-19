@@ -34,6 +34,18 @@ if rewording is slow, you may briefly see `rewording...`. ideally, the app prefe
 - `examples/` - safe demo study content
 - `AGENTS.md` - instructions that tell Codex how to work safely in this repo
 
+## app code layout
+
+the app is intentionally split by job, without adding a build step:
+
+- `app/*.html` - page structure only.
+- `app/*.css` - page styling only.
+- `app/flashcards.mjs` - flashcard page startup, rendering, and event wiring.
+- `app/flashcards/` - focused browser modules for scheduling, rewording, study-guide rendering, and chat.
+- `app/shared/` - small helpers shared by the flashcard and analytics pages.
+
+when changing behavior, start in the smallest matching module. for example, change spaced repetition in `app/flashcards/scheduler.mjs`, not in the HTML file.
+
 ## what's not in here
 
 real class material does not belong in the public part of this repo. pls do not put these in `app/` or `examples/`:
