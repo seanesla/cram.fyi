@@ -6,6 +6,8 @@ guidance for Codex agents working in this repo.
 
 cram.fyi is a public app/template repo. it contains the reusable flashcard interface, analytics page, Codex-backed chat bridge, and safe demo content.
 
+the flashcard UI uses an adaptive study queue. do not reintroduce a user-facing wave-size picker unless the user explicitly asks for that tradeoff. small fixed waves can make missed cards reappear too soon and weaken spaced repetition.
+
 ## directory layout
 
 - `app/` - public app code.
@@ -69,6 +71,8 @@ users can also keep class files outside the repo and start the app with `npm sta
 ## agent behavior
 
 - keep the app usable without private data by preserving demo mode.
+- keep reworded flashcard fronts answerable by the original `back` text. the back answer is fixed unless the user explicitly asks to edit the deck.
+- keep rewording separate from chat model settings. rewording should use the fixed low-cost helper model path and one-shot ephemeral Codex threads, not the user's selected chat model or chat history.
 - when a user adds or points to class material, proactively organize it under `classes/<course-name>/` with clear subfolders for exams, units, labs, notes, transcripts, slides, and quizzes.
 - use course-level folder names. if a folder is named after an exam, like `bio-exam4`, prefer moving it to a course folder like `bio` and putting exam-specific files under `bio/exams/exam-4/`.
 - treat selected class data as read-only study context unless the user asks to create, update, organize, or move local class files.

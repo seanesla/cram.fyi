@@ -10,6 +10,22 @@ i wanted something more local and less fussy: drop class material into a folder,
 
 the other thing i wanted was better review. when a card comes back, cram.fyi can reword the prompt instead of showing the exact same sentence every time, so you have to understand the idea instead of memorizing the phrasing. very necessary. very bio-exam-survival.
 
+## how studying works
+
+cram.fyi uses an adaptive study queue instead of making you choose tiny waves like `10`, `20`, or `30` cards. the app keeps a larger queue under the hood, mixes new cards with review cards, and gives missed cards a real gap before they come back. if you miss a card near the end of the queue, it should usually wait for the next queue instead of instantly boomeranging back at you.
+
+when a card repeats, the app can generate alternate front prompts while keeping the back answer fixed. the point is not to change the fact being tested. the point is to ask for the same answer in a slightly different way.
+
+rewording is intentionally separate from the chat helper:
+
+- the chat helper can use the model you pick in the UI.
+- rewording uses a fixed cheaper helper model on the server.
+- rewording starts a fresh one-shot Codex thread per card.
+- rewording does not keep the previous card's context around.
+- generated prompt variants are cached in your browser's local storage.
+
+if rewording is slow, you may briefly see `rewording...`. ideally, the app prefetches upcoming repeated cards before you reach them, so that loading state is just the fallback.
+
 ## what's in here
 
 - `app/flashcards.html` - the main flashcard study UI
@@ -112,7 +128,7 @@ if the material is not tied to one exam, use course-level folders like `lecture_
 2. ask Codex to organize the files by course, exam, unit, or topic if they are messy.
 3. ask Codex to create or update `flashcards.json` from that private context.
 4. run `npm start -- --class <course-name>`.
-5. study cards in the browser and check weak areas in analytics.
+5. study cards in the browser; cram.fyi will mix new cards, review cards, and spaced repeats.
 6. ask Codex to generate practice quizzes inside the matching class, exam, or unit folder.
 
 ## codex agent instructions
