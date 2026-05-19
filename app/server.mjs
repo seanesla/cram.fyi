@@ -194,10 +194,10 @@ function buildBaseInstructions() {
 
 function buildRewordInstructions() {
   return [
-    "You rewrite cram.fyi flashcard prompts.",
-    "Generate alternate questions that test the exact same answer.",
-    "Be concise, beginner-friendly, and faithful to the provided card.",
-    "Never add new facts. Never give away the answer.",
+    "You rewrite cram.fyi flashcard fronts while keeping the back answer fixed.",
+    "The existing back answer is the target answer. Every generated front must be answerable by that exact back answer.",
+    "Generate alternate prompts that make the student understand the same fact instead of memorizing the same wording.",
+    "Never add new facts, change the answer target, or ask for information not already answered by the fixed back answer.",
     "Return only valid JSON shaped like {\"variants\":[\"...\",\"...\",\"...\"]}."
   ].join("\n");
 }
@@ -206,17 +206,20 @@ function buildRewordPrompt(card) {
   const context = getStudyGuideExcerpt(card.topic);
   return [
     "Create 3 alternate front prompts for this flashcard.",
+    "Important: the back answer below will not be rewritten. Your job is only to rewrite the front so that this exact back answer still makes sense.",
     "",
     `Topic: ${card.topic || "General"}`,
     `Original front: ${card.front}`,
-    `Expected answer: ${card.back}`,
+    `Fixed back answer: ${card.back}`,
     "",
     "Relevant study guide context:",
     context || "(No relevant study guide excerpt found.)",
     "",
     "Rules:",
-    "- Ask for the same answer as the original front.",
-    "- Do not include the answer or obvious answer words in the prompt.",
+    "- The fixed back answer must directly answer every generated front.",
+    "- Preserve the subject of the original front. If the original asks about Charles Lyell, the generated front must still ask about Charles Lyell.",
+    "- Preserve the answer type. If the fixed back is an explanation, ask for an explanation, not a person, date, place, or term.",
+    "- Do not include the answer or obvious answer words in the front.",
     "- Do not make the prompt longer than the original unless needed for clarity.",
     "- Use natural wording. Do not mention AI, variants, or rewording.",
     "- Return only JSON: {\"variants\":[\"prompt 1\",\"prompt 2\",\"prompt 3\"]}"
