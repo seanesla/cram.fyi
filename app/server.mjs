@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseAcceptedRewordVariants } from "./rewording-validation.mjs";
+import { parseCandidateRewordFronts, parseJudgedRewordVariants } from "./rewording-validation.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const START_PORT = Number(process.env.PORT || 5174);
@@ -135,7 +135,7 @@ async function handleRewordCard(req, res) {
     return sendJson(res, 503, { error: `${REWORD_MODEL} is not available. Rewording was skipped.` });
   }
 
-  const reply = await codex.askOneShot({
+  const candidateReply = await codex.askOneShot({
     sessionId: `reword-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     model: REWORD_MODEL,
     effort: REWORD_EFFORT,
@@ -144,9 +144,23 @@ async function handleRewordCard(req, res) {
     developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
     prompt: buildRewordPrompt(card)
   });
-  const variants = parseAcceptedRewordVariants(reply, card.front);
-  if (!variants.length) {
+  const candidates = parseCandidateRewordFronts(candidateReply, card.front);
+  if (!candidates.length) {
     return sendJson(res, 502, { error: "Codex did not return usable variants." });
+  }
+
+  const judgeReply = await codex.askOneShot({
+    sessionId: `reword-judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    model: REWORD_MODEL,
+    effort: REWORD_EFFORT,
+    summary: "none",
+    baseInstructions: buildRewordJudgeInstructions(),
+    developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
+    prompt: buildRewordJudgePrompt(card, candidates)
+  });
+  const variants = parseJudgedRewordVariants(judgeReply, candidates, card.front);
+  if (!variants.length) {
+    return sendJson(res, 502, { error: "Codex did not approve any safe variants." });
   }
   return sendJson(res, 200, { variants, model: REWORD_MODEL });
 }
@@ -460,14 +474,12 @@ function buildBaseInstructions() {
 
 function buildRewordInstructions() {
   return [
-    "You rewrite cram.fyi flashcard fronts while keeping the back answer fixed.",
-    "The existing back answer is the target answer. Every generated front must be answerable by that exact back answer.",
-    "Generate alternate prompts that make the student understand the same fact instead of memorizing the same wording.",
+    "You propose alternate cram.fyi flashcard fronts while keeping the back answer fixed.",
+    "The existing back answer is the target answer. Every proposed front should be answerable by that exact back answer.",
+    "Generate candidate prompts that make the student understand the same fact instead of memorizing the same wording.",
     "Never add new facts, change the answer target, or ask for information not already answered by the fixed back answer.",
-    "For each variant, judge whether the unchanged back answer still directly answers the new front.",
-    "Set fixedBackStillAnswers to true only when the fixed back would be a correct answer to that exact new front.",
-    "Set answerTargetChanged to true if the new front asks for a different kind of answer than the original front.",
-    "Return only valid JSON shaped like {\"variants\":[{\"front\":\"...\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false}]}."
+    "A separate judge will reject unsafe candidates, so return only candidate front strings.",
+    "Return only valid JSON shaped like {\"variants\":[\"...\",\"...\",\"...\"]}."
   ].join("\n");
 }
 
@@ -488,12 +500,48 @@ function buildRewordPrompt(card) {
     "- The fixed back answer must directly answer every generated front.",
     "- Preserve the subject of the original front. If the original asks about Charles Lyell, the generated front must still ask about Charles Lyell.",
     "- Preserve the answer type. If the fixed back is an explanation, ask for an explanation, not a person, date, place, or term.",
-    "- If a generated front would be answered by a term/name but the fixed back is an explanation, mark answerTargetChanged true.",
-    "- Be strict. When unsure whether the fixed back still answers the new front, set fixedBackStillAnswers false.",
+    "- Do not ask \"What is the term for...?\" when the fixed back is a definition or explanation instead of the term itself.",
     "- Do not include the answer or obvious answer words in the front.",
     "- Do not make the prompt longer than the original unless needed for clarity.",
     "- Use natural wording. Do not mention AI, variants, or rewording.",
-    "- Return only JSON: {\"variants\":[{\"front\":\"prompt 1\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false},{\"front\":\"prompt 2\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false},{\"front\":\"prompt 3\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false}]}"
+    "- Return only JSON: {\"variants\":[\"prompt 1\",\"prompt 2\",\"prompt 3\",\"prompt 4\",\"prompt 5\"]}"
+  ].join("\n");
+}
+
+function buildRewordJudgeInstructions() {
+  return [
+    "You are a strict flashcard safety judge for cram.fyi.",
+    "Your job is to decide whether each candidate front is correctly answered by the unchanged fixed back answer.",
+    "Reject any candidate that changes the answer target, even if it is about the same topic.",
+    "If a candidate asks for a term/name/process but the fixed back is a definition or explanation, reject it.",
+    "If a candidate asks for a definition/explanation but the fixed back is only a term/name, reject it.",
+    "When unsure, reject.",
+    "Return only valid JSON shaped like {\"judgments\":[{\"front\":\"...\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false,\"reason\":\"...\"}]}."
+  ].join("\n");
+}
+
+function buildRewordJudgePrompt(card, candidates) {
+  return [
+    "Judge these candidate flashcard fronts.",
+    "For each candidate, decide whether the fixed back answer would be a correct answer to that exact candidate front.",
+    "",
+    `Topic: ${card.topic || "General"}`,
+    `Original front: ${card.front}`,
+    `Fixed back answer: ${card.back}`,
+    "",
+    "Candidates:",
+    JSON.stringify(candidates, null, 2),
+    "",
+    "Important examples:",
+    "- If the candidate asks \"What is the term for large-scale evolutionary change?\" but the fixed back is \"Large-scale evolutionary change produced by many accumulated microevolutionary changes...\", reject it. That question expects the term, not the definition sentence.",
+    "- If the candidate asks \"How would you define macroevolution?\" and the fixed back is the definition of macroevolution, accept it.",
+    "",
+    "Rules:",
+    "- fixedBackStillAnswers is true only if the fixed back directly answers the candidate front.",
+    "- answerTargetChanged is true if the candidate asks for a different kind of answer than the original front.",
+    "- Do not invent new fronts. Copy each candidate front exactly into its judgment.",
+    "- Return one judgment per candidate.",
+    "- Return only JSON: {\"judgments\":[{\"front\":\"candidate front\",\"fixedBackStillAnswers\":false,\"answerTargetChanged\":true,\"reason\":\"short reason\"}]}"
   ].join("\n");
 }
 

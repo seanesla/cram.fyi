@@ -1,19 +1,55 @@
 const MAX_FRONT_CHARS = 260;
 
-export function parseAcceptedRewordVariants(text, originalFront) {
+export function parseCandidateRewordFronts(text, originalFront) {
   for (const candidate of getJsonCandidates(text)) {
     try {
       const parsed = JSON.parse(candidate);
       const variants = Array.isArray(parsed.variants) ? parsed.variants : [];
       const seen = new Set();
-      const accepted = [];
+      const candidates = [];
 
       for (const variant of variants) {
-        const front = readAcceptedFront(variant, originalFront);
+        const front = readCandidateFront(variant, originalFront);
         if (!front) continue;
 
         const key = normalizedText(front);
         if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push(front);
+        if (candidates.length === 5) return candidates;
+      }
+
+      return candidates;
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+export function parseJudgedRewordVariants(text, candidateFronts, originalFront) {
+  const allowedCandidates = new Map();
+  candidateFronts.forEach(front => {
+    const cleaned = readCandidateFront(front, originalFront);
+    if (cleaned) allowedCandidates.set(normalizedText(cleaned), cleaned);
+  });
+
+  for (const candidate of getJsonCandidates(text)) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const judgments = Array.isArray(parsed.judgments) ? parsed.judgments : [];
+      const seen = new Set();
+      const accepted = [];
+
+      for (const judgment of judgments) {
+        if (!judgment || typeof judgment !== "object" || Array.isArray(judgment)) continue;
+        if (judgment.fixedBackStillAnswers !== true) continue;
+        if (judgment.answerTargetChanged !== false) continue;
+
+        const key = normalizedText(judgment.front);
+        const front = allowedCandidates.get(key);
+        if (!front || seen.has(key)) continue;
+
         seen.add(key);
         accepted.push(front);
         if (accepted.length === 3) return accepted;
@@ -27,12 +63,8 @@ export function parseAcceptedRewordVariants(text, originalFront) {
   return [];
 }
 
-function readAcceptedFront(variant, originalFront) {
-  if (!variant || typeof variant !== "object" || Array.isArray(variant)) return "";
-  if (variant.fixedBackStillAnswers !== true) return "";
-  if (variant.answerTargetChanged !== false) return "";
-
-  const front = cleanFront(variant.front);
+function readCandidateFront(value, originalFront) {
+  const front = cleanFront(value && typeof value === "object" && !Array.isArray(value) ? value.front : value);
   if (!front || front.length > MAX_FRONT_CHARS) return "";
   if (normalizedText(front) === normalizedText(originalFront)) return "";
   return front;
