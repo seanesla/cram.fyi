@@ -90,7 +90,7 @@ async function handleChat(req, res) {
   if (!message) return sendJson(res, 400, { error: "Message is required." });
 
   res.writeHead(200, {
-    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Type": "application/x-ndjson; charset=utf-8",
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff"
   });
@@ -101,15 +101,21 @@ async function handleChat(req, res) {
       sessionId: String(body.sessionId || "default"),
       model: typeof body.model === "string" ? body.model : "",
       effort: typeof body.effort === "string" ? body.effort : "",
+      summary: "auto",
       prompt,
-      onDelta: chunk => res.write(chunk)
+      onReasoningSummaryDelta: chunk => sendChatEvent(res, "reasoning_summary_delta", chunk),
+      onDelta: chunk => sendChatEvent(res, "answer_delta", chunk)
     });
-    if (!reply.trim()) res.write("Codex finished without returning visible text.");
+    if (!reply.trim()) sendChatEvent(res, "answer_delta", "Codex finished without returning visible text.");
   } catch (error) {
-    res.write(formatError(error));
+    sendChatEvent(res, "error", formatError(error));
   } finally {
     res.end();
   }
+}
+
+function sendChatEvent(res, type, value) {
+  res.write(`${JSON.stringify({ type, value: String(value || "") })}\n`);
 }
 
 function buildTutorPrompt(body) {
@@ -161,6 +167,11 @@ function formatError(error) {
 function isContextLimitError(error) {
   const text = error && error.message ? error.message : String(error);
   return /contextWindowExceeded|context window|context length|too many tokens/i.test(text);
+}
+
+function isReasoningSummaryError(error) {
+  const text = error && error.message ? error.message : String(error);
+  return /reasoning summary|summary.*(unsupported|not supported|unavailable|invalid)|unsupported.*summary|organization verification/i.test(text);
 }
 
 async function serveStatic(pathname, res) {
@@ -270,21 +281,24 @@ class CodexBridge {
     }
   }
 
-  async ask({ sessionId, model, effort, prompt, onDelta }) {
+  async ask({ sessionId, model, effort, summary, prompt, onDelta, onReasoningSummaryDelta }) {
     await this.ensureReady();
     const session = await this.ensureSession(sessionId);
     if (session.active) throw new Error("Codex is still answering the previous question.");
 
     try {
-      return await this.startTurn(session, { model, effort, prompt, onDelta });
+      return await this.startTurn(session, { model, effort, summary, prompt, onDelta, onReasoningSummaryDelta });
     } catch (error) {
+      if (summary && isReasoningSummaryError(error)) {
+        return this.startTurn(session, { model, effort, summary: "none", prompt, onDelta, onReasoningSummaryDelta });
+      }
       if (!isContextLimitError(error)) throw error;
       await this.compactSession(sessionId);
-      return this.startTurn(session, { model, effort, prompt, onDelta });
+      return this.startTurn(session, { model, effort, summary, prompt, onDelta, onReasoningSummaryDelta });
     }
   }
 
-  async startTurn(session, { model, effort, prompt, onDelta }) {
+  async startTurn(session, { model, effort, summary, prompt, onDelta, onReasoningSummaryDelta }) {
     let fullText = "";
     const active = {
       turnId: null,
@@ -292,6 +306,7 @@ class CodexBridge {
         fullText += chunk;
         onDelta(chunk);
       },
+      onReasoningSummaryDelta: onReasoningSummaryDelta || (() => {}),
       resolve: null,
       reject: null
     };
@@ -310,7 +325,8 @@ class CodexBridge {
         approvalPolicy: "never",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         model: model || null,
-        effort: effort || null
+        effort: effort || null,
+        summary: summary || null
       });
       active.turnId = response.turn.id;
       await completed;
@@ -471,6 +487,11 @@ class CodexBridge {
     if (message.method === "item/agentMessage/delta") {
       if (!session.active.turnId || params.turnId === session.active.turnId) {
         session.active.onDelta(params.delta || "");
+      }
+    }
+    if (message.method === "item/reasoning/summaryTextDelta") {
+      if (!session.active.turnId || params.turnId === session.active.turnId) {
+        session.active.onReasoningSummaryDelta(params.delta || "");
       }
     }
     if (message.method === "error") {

@@ -404,6 +404,64 @@
     opacity: 0.72;
     border: 1px dashed #566574;
   }
+  .thinking-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #c7d2de;
+    font-weight: 650;
+    background: linear-gradient(90deg, #7b8794 0%, #eef3f7 38%, #7b8794 76%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: thinkingShimmer 1.45s ease-in-out infinite;
+  }
+  .thinking-indicator::after {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #8bd3ff;
+    box-shadow: 10px 0 0 rgba(139,211,255,0.58), 20px 0 0 rgba(139,211,255,0.28);
+    animation: thinkingDots 1.05s ease-in-out infinite;
+  }
+  .reasoning-summary {
+    margin-bottom: 8px;
+    border-left: 2px solid rgba(139,211,255,0.42);
+    padding-left: 8px;
+    color: #9da8b3;
+    font-size: 0.82rem;
+  }
+  .reasoning-summary-label {
+    margin-bottom: 3px;
+    color: #8bd3ff;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .answer-body:empty { display: none; }
+  @keyframes thinkingShimmer {
+    0% { background-position: 180% 0; }
+    100% { background-position: -60% 0; }
+  }
+  @keyframes thinkingDots {
+    0%, 100% {
+      opacity: 0.4;
+      transform: translateY(0);
+    }
+    50% {
+      opacity: 1;
+      transform: translateY(-2px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking-indicator,
+    .thinking-indicator::after {
+      animation: none;
+    }
+  }
   .command-menu {
     position: absolute;
     left: 0;
@@ -1256,6 +1314,43 @@ function renderMarkdown(text) {
   return blocks.join("") || "";
 }
 
+function showThinkingMessage(element) {
+  element.dataset.rawText = "";
+  element.dataset.reasoningSummary = "";
+  element.innerHTML = [
+    `<div class="reasoning-summary hidden">`,
+    `<div class="reasoning-summary-label">thinking summary</div>`,
+    `<div class="reasoning-summary-text"></div>`,
+    `</div>`,
+    `<div class="thinking-indicator">thinking</div>`,
+    `<div class="answer-body"></div>`
+  ].join("");
+}
+
+function updateReasoningSummary(element, text) {
+  element.dataset.reasoningSummary = text;
+  const panel = element.querySelector(".reasoning-summary");
+  const body = element.querySelector(".reasoning-summary-text");
+  if (!panel || !body) return;
+  panel.classList.toggle("hidden", !text.trim());
+  body.innerHTML = renderMarkdown(text);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function updateStreamingAnswer(element, answer, reasoningSummary = "") {
+  element.dataset.rawText = answer;
+  const thinking = element.querySelector(".thinking-indicator");
+  const body = element.querySelector(".answer-body");
+  if (thinking) thinking.remove();
+  if (reasoningSummary) updateReasoningSummary(element, reasoningSummary);
+  if (body) {
+    body.innerHTML = renderMarkdown(answer);
+  } else {
+    setMessageText(element, answer);
+  }
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 function loadHelperSessionId() {
   const saved = localStorage.getItem(CHAT_SESSION_KEY);
   if (saved) return saved;
@@ -1588,20 +1683,50 @@ async function streamLiveHelper(userText, target) {
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let raw = "";
-  setMessageText(target, "");
+  let answer = "";
+  let reasoningSummary = "";
+  let buffer = "";
+  showThinkingMessage(target);
+  const handleEventLine = line => {
+    if (!line.trim()) return;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      answer += line;
+      updateStreamingAnswer(target, answer, reasoningSummary);
+      return;
+    }
+    const value = String(event.value || "");
+    if (event.type === "reasoning_summary_delta") {
+      reasoningSummary += value;
+      updateReasoningSummary(target, reasoningSummary);
+      return;
+    }
+    if (event.type === "answer_delta") {
+      answer += value;
+      updateStreamingAnswer(target, answer, reasoningSummary);
+      return;
+    }
+    if (event.type === "error") {
+      answer = value;
+      updateStreamingAnswer(target, answer, reasoningSummary);
+    }
+  };
   while (true) {
     const {value, done} = await reader.read();
     if (done) break;
-    raw += decoder.decode(value, {stream: true});
-    setMessageText(target, raw);
-    chatLog.scrollTop = chatLog.scrollHeight;
+    buffer += decoder.decode(value, {stream: true});
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    lines.forEach(handleEventLine);
   }
-  raw += decoder.decode();
-  if (!raw.trim()) {
-    raw = "Codex finished without returning visible text.";
+  buffer += decoder.decode();
+  if (buffer.trim()) handleEventLine(buffer);
+  if (!answer.trim()) {
+    answer = "Codex finished without returning visible text.";
+    updateStreamingAnswer(target, answer, reasoningSummary);
   }
-  setMessageText(target, raw);
   saveChatMessages();
   refreshSessionStatus();
 }
@@ -1672,7 +1797,8 @@ async function processChatQueue() {
   updateChatSettings();
   const item = chatQueue.shift();
   item.pending.classList.remove("pending");
-  const reply = addBotMessage("Codex is thinking...");
+  const reply = addBotMessage("");
+  showThinkingMessage(reply);
   try {
     await streamLiveHelper(item.text, reply);
   } catch (error) {
