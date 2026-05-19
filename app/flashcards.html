@@ -681,6 +681,9 @@ let POSITION_KEY = `${storagePrefix}_position_v1`;
 let ORDER_MODE_KEY = `${storagePrefix}_orderMode_v1`;
 let WAVE_SIZE_KEY = `${storagePrefix}_waveSize_v1`;
 let WAVE_START_KEY = `${storagePrefix}_waveStart_v1`;
+let WAVE_NUMBER_KEY = `${storagePrefix}_waveNumber_v1`;
+let WAVE_QUEUE_KEY = `${storagePrefix}_waveQueue_v1`;
+let SCHEDULER_KEY = `${storagePrefix}_scheduler_v1`;
 const LEFT_SIDEBAR_WIDTH_KEY = "cramFyi_leftSidebarWidth_v1";
 const RIGHT_SIDEBAR_WIDTH_KEY = "cramFyi_rightSidebarWidth_v1";
 const MASTERY_LEVELS = ["unfamiliar", "somewhat familiar", "familiar", "mastered"];
@@ -690,6 +693,7 @@ let topicSections = {};
 
 let mastery = loadMastery();
 let variants = loadVariants();
+let scheduler = new Map();
 let showKnowns = localStorage.getItem(SHOW_KNOWNS_KEY) === "true";
 let selected = loadSelected();
 let deck = [];
@@ -699,6 +703,7 @@ let index = loadPosition();
 let orderMode = loadOrderMode();
 let waveSizeValue = loadWaveSize();
 let waveStart = loadWaveStart();
+let waveNumber = loadWaveNumber();
 
 const card = document.getElementById("card");
 const cardWrap = document.getElementById("cardWrap");
@@ -873,24 +878,189 @@ function saveWaveStart() {
   localStorage.setItem(WAVE_START_KEY, String(waveStart));
 }
 
-function rebuildDeck(preserveIndex = false) {
-  const currentCardIndex = deck[index] ? deck[index]._i : null;
-  sourceDeck = allCards
+function loadWaveNumber() {
+  const saved = Number(localStorage.getItem(WAVE_NUMBER_KEY));
+  return Number.isInteger(saved) && saved >= 1 ? saved : 1;
+}
+
+function saveWaveNumber() {
+  localStorage.setItem(WAVE_NUMBER_KEY, String(waveNumber));
+}
+
+function getDefaultSchedulerState(cardIndex) {
+  const level = mastery.get(cardIndex);
+  return {
+    seenCount: level && level !== "unfamiliar" ? 1 : 0,
+    lastSeenWave: 0,
+    nextDueWave: level === "mastered" ? 999999 : 0,
+    correctStreak: level === "mastered" ? 2 : 0,
+    missedWave: 0
+  };
+}
+
+function normalizeSchedulerState(cardIndex, value = {}) {
+  const fallback = getDefaultSchedulerState(cardIndex);
+  const seenCount = Number(value.seenCount);
+  const lastSeenWave = Number(value.lastSeenWave);
+  const nextDueWave = Number(value.nextDueWave);
+  const correctStreak = Number(value.correctStreak);
+  const missedWave = Number(value.missedWave);
+  return {
+    seenCount: Number.isInteger(seenCount) && seenCount >= 0 ? seenCount : fallback.seenCount,
+    lastSeenWave: Number.isInteger(lastSeenWave) && lastSeenWave >= 0 ? lastSeenWave : fallback.lastSeenWave,
+    nextDueWave: Number.isInteger(nextDueWave) && nextDueWave >= 0 ? nextDueWave : fallback.nextDueWave,
+    correctStreak: Number.isInteger(correctStreak) && correctStreak >= 0 ? correctStreak : fallback.correctStreak,
+    missedWave: Number.isInteger(missedWave) && missedWave >= 0 ? missedWave : fallback.missedWave
+  };
+}
+
+function loadScheduler() {
+  const map = new Map();
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCHEDULER_KEY) || "{}");
+    Object.entries(raw).forEach(([key, value]) => {
+      const i = Number(key);
+      if (Number.isInteger(i) && i >= 0 && i < allCards.length) {
+        map.set(i, normalizeSchedulerState(i, value));
+      }
+    });
+  } catch {
+    return map;
+  }
+  return map;
+}
+
+function getSchedulerState(cardIndex) {
+  if (!scheduler.has(cardIndex)) {
+    scheduler.set(cardIndex, getDefaultSchedulerState(cardIndex));
+  }
+  return scheduler.get(cardIndex);
+}
+
+function setSchedulerState(cardIndex, state) {
+  scheduler.set(cardIndex, normalizeSchedulerState(cardIndex, state));
+}
+
+function saveScheduler() {
+  const obj = {};
+  scheduler.forEach((value, key) => {
+    obj[key] = value;
+  });
+  localStorage.setItem(SCHEDULER_KEY, JSON.stringify(obj));
+}
+
+function clearCurrentWave() {
+  localStorage.removeItem(WAVE_QUEUE_KEY);
+}
+
+function saveCurrentWave() {
+  localStorage.setItem(WAVE_QUEUE_KEY, JSON.stringify(deck.map(cardData => cardData._i)));
+  savePosition();
+}
+
+function loadCurrentWave() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WAVE_QUEUE_KEY) || "[]");
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const valid = raw
+      .filter(i => Number.isInteger(i) && i >= 0 && i < allCards.length)
+      .filter(i => selected.has(i))
+      .filter(i => showKnowns || getMastery(i) !== "mastered");
+    return valid.map(i => makeScheduledCard(i));
+  } catch {
+    return [];
+  }
+}
+
+function makeScheduledCard(cardIndex, reason = getCardReason(cardIndex)) {
+  return {...allCards[cardIndex], _i: cardIndex, waveReason: reason};
+}
+
+function getActiveCards() {
+  return allCards
     .map((cardData, i) => ({...cardData, _i: i}))
     .filter(cardData => selected.has(cardData._i))
-    .filter(cardData => showKnowns || getMastery(cardData._i) !== "mastered");
+    .filter(cardData => showKnowns || getMastery(cardData._i) !== "mastered")
+    .sort((a, b) => a._i - b._i);
+}
 
-  if (orderMode === "study") {
-    sourceDeck.sort((a, b) => a._i - b._i);
-  }
+function getCardReason(cardIndex) {
+  const state = getSchedulerState(cardIndex);
+  const level = getMastery(cardIndex);
+  if (state.seenCount === 0) return "new";
+  if (state.missedWave === waveNumber - 1) return "missed last wave";
+  if (level === "familiar") return state.correctStreak >= 1 ? "almost mastered" : "review";
+  if (level === "mastered") return "mastered";
+  return "review";
+}
 
-  if (orderMode === "study") {
-    if (waveStart >= sourceDeck.length) waveStart = Math.max(sourceDeck.length - waveSizeValue, 0);
-    deck = sourceDeck.slice(waveStart, waveStart + waveSizeValue);
-    saveWaveStart();
-  } else {
-    deck = [...sourceDeck];
+function getReviewRank(cardData) {
+  const state = getSchedulerState(cardData._i);
+  const level = getMastery(cardData._i);
+  const levelRank = MASTERY_LEVELS.indexOf(level);
+  return [
+    state.missedWave === waveNumber - 1 ? 0 : 1,
+    state.nextDueWave <= waveNumber ? 0 : 1,
+    levelRank === -1 ? 0 : levelRank,
+    state.nextDueWave,
+    state.lastSeenWave,
+    cardData._i
+  ];
+}
+
+function compareRank(a, b) {
+  const left = getReviewRank(a);
+  const right = getReviewRank(b);
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return left[i] - right[i];
   }
+  return 0;
+}
+
+function takeCards(list, count, used) {
+  const picked = [];
+  for (const cardData of list) {
+    if (picked.length >= count) break;
+    if (used.has(cardData._i)) continue;
+    used.add(cardData._i);
+    picked.push(makeScheduledCard(cardData._i));
+  }
+  return picked;
+}
+
+function buildScheduledWave() {
+  sourceDeck = getActiveCards();
+  const used = new Set();
+  const newCards = sourceDeck.filter(cardData => getSchedulerState(cardData._i).seenCount === 0);
+  const reviewCards = sourceDeck
+    .filter(cardData => getSchedulerState(cardData._i).seenCount > 0)
+    .filter(cardData => getMastery(cardData._i) !== "mastered")
+    .filter(cardData => getSchedulerState(cardData._i).nextDueWave <= waveNumber || getSchedulerState(cardData._i).missedWave === waveNumber - 1)
+    .sort(compareRank);
+  const futureReviewCards = sourceDeck
+    .filter(cardData => getSchedulerState(cardData._i).seenCount > 0)
+    .filter(cardData => getMastery(cardData._i) !== "mastered")
+    .filter(cardData => !reviewCards.some(review => review._i === cardData._i))
+    .sort(compareRank);
+  const reviewTarget = Math.min(reviewCards.length, Math.round(waveSizeValue * 0.3));
+  const wave = [
+    ...takeCards(reviewCards, reviewTarget, used)
+  ];
+  wave.push(...takeCards(newCards, waveSizeValue - wave.length, used));
+  wave.push(...takeCards(reviewCards, waveSizeValue - wave.length, used));
+  wave.push(...takeCards(futureReviewCards, waveSizeValue - wave.length, used));
+  if (orderMode === "shuffle") shuffleArray(wave);
+  deck = wave;
+  index = 0;
+  saveCurrentWave();
+  return deck;
+}
+
+function rebuildDeck(preserveIndex = false) {
+  const currentCardIndex = deck[index] ? deck[index]._i : null;
+  sourceDeck = getActiveCards();
+  deck = loadCurrentWave();
+  if (!deck.length) buildScheduledWave();
 
   if (preserveIndex && currentCardIndex !== null) {
     const nextIndex = deck.findIndex(cardData => cardData._i === currentCardIndex);
@@ -903,6 +1073,7 @@ function rebuildDeck(preserveIndex = false) {
 }
 
 function render() {
+  sourceDeck = getActiveCards();
   const selectedCards = allCards.map((cardData, i) => ({...cardData, _i: i})).filter(cardData => selected.has(cardData._i));
   unfamiliarCount.textContent = selectedCards.filter(cardData => getMastery(cardData._i) === "unfamiliar").length;
   somewhatCount.textContent = selectedCards.filter(cardData => getMastery(cardData._i) === "somewhat familiar").length;
@@ -930,8 +1101,8 @@ function render() {
   const current = deck[index];
   const text = getCardText(current);
   counter.textContent = orderMode === "study"
-    ? `card ${index + 1} of ${deck.length} in current wave`
-    : `${index + 1} of ${deck.length}`;
+    ? `card ${index + 1} of ${deck.length} left in wave ${waveNumber}`
+    : `card ${index + 1} of ${deck.length} left in shuffled wave ${waveNumber}`;
   frontText.textContent = text.front;
   backText.textContent = text.back;
   frontTopic.textContent = current.topic;
@@ -941,7 +1112,7 @@ function render() {
   const className = getMasteryClass(cardStatus);
   [frontStatus, backStatus].forEach(el => {
     el.classList.toggle("hidden", !cardStatus);
-    el.textContent = cardStatus || "";
+    el.textContent = `${cardStatus || "unfamiliar"} · ${current.waveReason || getCardReason(current._i)}`;
     el.className = `status ${className || "hidden"}`;
   });
   renderHelperContext();
@@ -968,10 +1139,12 @@ async function loadStudyData() {
   selected = loadSelected();
   mastery = loadMastery();
   variants = loadVariants();
+  scheduler = loadScheduler();
   showKnowns = localStorage.getItem(SHOW_KNOWNS_KEY) === "true";
   orderMode = loadOrderMode();
   waveSizeValue = loadWaveSize();
   waveStart = loadWaveStart();
+  waveNumber = loadWaveNumber();
   index = loadPosition();
   rebuildDeck();
 }
@@ -990,6 +1163,9 @@ function configureStorageKeys(sourceKey) {
   ORDER_MODE_KEY = `${storagePrefix}_orderMode_v1`;
   WAVE_SIZE_KEY = `${storagePrefix}_waveSize_v1`;
   WAVE_START_KEY = `${storagePrefix}_waveStart_v1`;
+  WAVE_NUMBER_KEY = `${storagePrefix}_waveNumber_v1`;
+  WAVE_QUEUE_KEY = `${storagePrefix}_waveQueue_v1`;
+  SCHEDULER_KEY = `${storagePrefix}_scheduler_v1`;
   migrateStorageKeys(oldPrefix, storagePrefix, [
     "selected_v1",
     "size_v1",
@@ -1000,7 +1176,10 @@ function configureStorageKeys(sourceKey) {
     "position_v1",
     "orderMode_v1",
     "waveSize_v1",
-    "waveStart_v1"
+    "waveStart_v1",
+    "waveNumber_v1",
+    "waveQueue_v1",
+    "scheduler_v1"
   ]);
 }
 
@@ -1104,42 +1283,101 @@ function updateStudyGuideTree(topic) {
 
 function nextCard() {
   if (!deck.length) return;
-  index = (index + 1) % deck.length;
+  index = Math.min(index + 1, deck.length - 1);
   savePosition();
   render();
 }
 
 function advanceWaveIfComplete() {
-  if (orderMode !== "study" || deck.length > 0 || sourceDeck.length === 0) return;
-  waveStart += waveSizeValue;
-  if (waveStart >= sourceDeck.length) waveStart = 0;
+  if (deck.length > 0) return;
+  waveNumber += 1;
+  waveStart = 0;
   index = 0;
+  saveWaveNumber();
   saveWaveStart();
-  rebuildDeck();
+  clearCurrentWave();
+  buildScheduledWave();
+  render();
+}
+
+function getNextMasteryAfterKnown(previous, state) {
+  if (previous === "unfamiliar") {
+    state.correctStreak = 0;
+    state.nextDueWave = waveNumber + 1;
+    return "somewhat familiar";
+  }
+  if (previous === "somewhat familiar") {
+    state.correctStreak = 0;
+    state.nextDueWave = waveNumber + 1;
+    return "familiar";
+  }
+  if (previous === "familiar") {
+    state.correctStreak += 1;
+    if (state.correctStreak >= 2) {
+      state.nextDueWave = 999999;
+      return "mastered";
+    }
+    state.nextDueWave = waveNumber + 2;
+    return "familiar";
+  }
+  state.correctStreak = Math.max(state.correctStreak, 2);
+  state.nextDueWave = 999999;
+  return "mastered";
+}
+
+function getNextMasteryAfterLearning(previous, state) {
+  state.correctStreak = 0;
+  state.nextDueWave = waveNumber + 1;
+  state.missedWave = waveNumber;
+  if (previous === "mastered") return "familiar";
+  if (previous === "familiar") return "somewhat familiar";
+  return "unfamiliar";
 }
 
 function mark(value) {
   if (!deck.length) return;
   const current = deck[index];
   const previous = getMastery(current._i);
-  const next = value === "known" ? promote(previous) : demote(previous);
-  history.push({cardIndex: current._i, previous, variant: variants.get(current._i), position: index});
+  const previousScheduler = {...getSchedulerState(current._i)};
+  const previousDeck = deck.map(cardData => cardData._i);
+  const state = {...previousScheduler};
+  state.seenCount += 1;
+  state.lastSeenWave = waveNumber;
+  const next = value === "known"
+    ? getNextMasteryAfterKnown(previous, state)
+    : getNextMasteryAfterLearning(previous, state);
+  if (value === "known" && state.missedWave > 0 && state.missedWave < waveNumber) {
+    state.missedWave = 0;
+  }
+  history.push({
+    cardIndex: current._i,
+    previous,
+    previousScheduler,
+    variant: variants.get(current._i),
+    position: index,
+    deck: previousDeck,
+    waveNumber
+  });
   mastery.set(current._i, next);
+  setSchedulerState(current._i, state);
   rotateVariant(current._i);
   saveMastery();
+  saveScheduler();
   saveVariants();
 
-  if (orderMode === "study" && value === "learning" && !showKnowns && next !== "mastered") {
+  deck.splice(index, 1);
+  if (value === "learning" && !showKnowns && next !== "mastered") {
     const repeatDelay = getRepeatDelay(next, deck.length - index);
-    deck.splice(index + repeatDelay, 0, current);
-    render();
-    nextCard();
-    return;
+    const repeatCard = makeScheduledCard(current._i, "review");
+    deck.splice(Math.min(index + repeatDelay, deck.length), 0, repeatCard);
   }
-
-  rebuildDeck(true);
-  advanceWaveIfComplete();
-  if (deck.length && (!showKnowns || next !== "mastered")) nextCard();
+  if (index >= deck.length) index = Math.max(deck.length - 1, 0);
+  saveCurrentWave();
+  if (deck.length === 0) {
+    advanceWaveIfComplete();
+  } else {
+    render();
+  }
 }
 
 function undo() {
@@ -1147,36 +1385,53 @@ function undo() {
   if (!last) return;
   if (last.previous) mastery.set(last.cardIndex, last.previous);
   else mastery.delete(last.cardIndex);
+  if (last.previousScheduler) setSchedulerState(last.cardIndex, last.previousScheduler);
   if (Number.isInteger(last.variant)) variants.set(last.cardIndex, last.variant);
   else variants.delete(last.cardIndex);
+  if (Array.isArray(last.deck)) deck = last.deck.map(i => makeScheduledCard(i));
+  if (Number.isInteger(last.waveNumber)) {
+    waveNumber = last.waveNumber;
+    saveWaveNumber();
+  }
   saveMastery();
+  saveScheduler();
   saveVariants();
-  rebuildDeck();
+  saveCurrentWave();
   const restored = deck.findIndex(cardData => cardData._i === last.cardIndex);
   index = restored >= 0 ? restored : Math.min(last.position, Math.max(deck.length - 1, 0));
   savePosition();
   render();
 }
 
+function shuffleArray(items) {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
 function shuffleDeck() {
   orderMode = "shuffle";
   localStorage.setItem(ORDER_MODE_KEY, orderMode);
-  waveNote.textContent = "";
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
+  shuffleArray(deck);
   index = 0;
-  savePosition();
+  saveCurrentWave();
   render();
 }
 
 function getWaveNote() {
-  if (orderMode !== "study") return "";
   if (!sourceDeck.length) return "No active cards are left.";
-  const start = waveStart + 1;
-  const end = Math.min(waveStart + waveSizeValue, sourceDeck.length);
-  return `Studying cards ${start}-${end} of ${sourceDeck.length}. Weaker cards repeat sooner.`;
+  const counts = deck.reduce((acc, cardData) => {
+    const reason = cardData.waveReason || getCardReason(cardData._i);
+    if (reason === "new") acc.new += 1;
+    else acc.review += 1;
+    if (reason === "missed last wave") acc.missed += 1;
+    return acc;
+  }, {new: 0, review: 0, missed: 0});
+  const mode = orderMode === "shuffle" ? "shuffled wave" : "wave";
+  const missed = counts.missed ? ` · ${counts.missed} missed last wave` : "";
+  return `${mode} ${waveNumber}: ${counts.review} review, ${counts.new} new${missed}`;
 }
 
 function getMastery(cardIndex) {
@@ -1185,16 +1440,6 @@ function getMastery(cardIndex) {
 
 function getMasteryClass(level) {
   return MASTERY_CLASSES[MASTERY_LEVELS.indexOf(level)] || "unfamiliar";
-}
-
-function promote(level) {
-  const i = MASTERY_LEVELS.indexOf(level);
-  return MASTERY_LEVELS[Math.min(i + 1, MASTERY_LEVELS.length - 1)];
-}
-
-function demote(level) {
-  const i = MASTERY_LEVELS.indexOf(level);
-  return MASTERY_LEVELS[Math.max(i - 1, 0)];
 }
 
 function getRepeatDelay(level, remaining) {
@@ -1910,34 +2155,45 @@ shuffleOrder.addEventListener("click", shuffleDeck);
 waveSize.addEventListener("change", () => {
   waveSizeValue = Number(waveSize.value);
   localStorage.setItem(WAVE_SIZE_KEY, String(waveSizeValue));
-  if (orderMode === "study") {
-    waveStart = 0;
-    index = 0;
-    saveWaveStart();
-    rebuildDeck();
-  }
+  waveNumber = 1;
+  waveStart = 0;
+  index = 0;
+  saveWaveNumber();
+  saveWaveStart();
+  clearCurrentWave();
+  rebuildDeck();
 });
 studyGuideOrder.addEventListener("click", () => {
   orderMode = "study";
   localStorage.setItem(ORDER_MODE_KEY, orderMode);
+  waveNumber = 1;
   waveStart = 0;
   index = 0;
+  saveWaveNumber();
   saveWaveStart();
+  clearCurrentWave();
   rebuildDeck();
 });
 toggleKnowns.addEventListener("click", () => {
   showKnowns = !showKnowns;
   localStorage.setItem(SHOW_KNOWNS_KEY, String(showKnowns));
+  clearCurrentWave();
   rebuildDeck(true);
 });
 document.getElementById("reset").addEventListener("click", () => {
   mastery = new Map();
   variants = new Map();
+  scheduler = new Map();
   history = [];
+  waveNumber = 1;
   waveStart = 0;
+  index = 0;
   saveMastery();
+  saveScheduler();
   saveVariants();
+  saveWaveNumber();
   saveWaveStart();
+  clearCurrentWave();
   rebuildDeck();
 });
 
@@ -1955,6 +2211,7 @@ document.addEventListener("keydown", event => {
   } else if (event.key.toLowerCase() === "k") {
     showKnowns = !showKnowns;
     localStorage.setItem(SHOW_KNOWNS_KEY, String(showKnowns));
+    clearCurrentWave();
     rebuildDeck(true);
   }
 });
