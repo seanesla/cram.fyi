@@ -3,7 +3,7 @@
   "private": false,
   "scripts": {
     "start": "node app/server.mjs",
-    "check": "find app -name '*.mjs' -print0 | xargs -0 -n1 node --check"
+    "check": "find app -name '*.mjs' -print0 | xargs -0 -n1 node --check && node --test app/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

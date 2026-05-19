@@ -6,10 +6,10 @@ import {
   saveMapAsObject
 } from "../shared/storage.mjs";
 
-const ADAPTIVE_QUEUE_SIZE = 30;
-const REVIEW_SHARE = 0.4;
-const MIN_MISSED_REPEAT_GAP = 8;
-const MASTERED_DUE_VALUE = 999999;
+export const ADAPTIVE_QUEUE_SIZE = 30;
+export const REVIEW_SHARE = 0.4;
+export const MIN_MISSED_REPEAT_GAP = 8;
+export const MASTERED_DUE_VALUE = 999999;
 
 export function loadStudyPosition(storageKeys) {
   return loadStoredNumber(storageKeys.position);
@@ -134,21 +134,7 @@ export function markCard(state, storageKeys, value, { rotateVariant } = {}) {
   const previous = getMastery(state, current._i);
   const previousScheduler = { ...getSchedulerState(state, current._i) };
   const previousQueue = state.currentQueue.map(cardData => cardData._i);
-  const schedulerState = { ...previousScheduler };
   const previousStudyStep = state.studyStep;
-
-  state.studyStep += 1;
-  schedulerState.seenCount += 1;
-  schedulerState.lastSeenWave = state.waveNumber;
-  schedulerState.lastSeenStep = state.studyStep;
-
-  const next = value === "known"
-    ? getNextMasteryAfterKnown(state, previous, schedulerState)
-    : getNextMasteryAfterLearning(state, previous, schedulerState);
-
-  if (value === "known" && schedulerState.missedWave > 0 && schedulerState.missedWave < state.waveNumber) {
-    schedulerState.missedWave = 0;
-  }
 
   state.history.push({
     cardIndex: current._i,
@@ -161,8 +147,7 @@ export function markCard(state, storageKeys, value, { rotateVariant } = {}) {
     studyStep: previousStudyStep
   });
 
-  state.masteryByCard.set(current._i, next);
-  setSchedulerState(state, current._i, schedulerState);
+  const next = applyAnswerResult(state, current._i, value);
   if (rotateVariant) rotateVariant(current._i);
   saveMastery(state, storageKeys);
   saveScheduler(state, storageKeys);
@@ -182,6 +167,28 @@ export function markCard(state, storageKeys, value, { rotateVariant } = {}) {
   }
   saveCurrentQueue(state, storageKeys);
   advanceQueueIfComplete(state, storageKeys);
+}
+
+export function applyAnswerResult(state, cardIndex, value) {
+  const previous = getMastery(state, cardIndex);
+  const schedulerState = { ...getSchedulerState(state, cardIndex) };
+
+  state.studyStep += 1;
+  schedulerState.seenCount += 1;
+  schedulerState.lastSeenWave = state.waveNumber;
+  schedulerState.lastSeenStep = state.studyStep;
+
+  const next = value === "known"
+    ? getNextMasteryAfterKnown(state, previous, schedulerState)
+    : getNextMasteryAfterLearning(state, previous, schedulerState);
+
+  if (value === "known" && schedulerState.missedWave > 0 && schedulerState.missedWave < state.waveNumber) {
+    schedulerState.missedWave = 0;
+  }
+
+  state.masteryByCard.set(cardIndex, next);
+  setSchedulerState(state, cardIndex, schedulerState);
+  return next;
 }
 
 export function undoLastMark(state, storageKeys) {
@@ -372,22 +379,22 @@ function isCoolingMiss(state, cardIndex) {
   return schedulerState.missedWave > 0 && schedulerState.nextDueStep > state.studyStep;
 }
 
-function buildScheduledQueue(state, storageKeys) {
-  state.sourceDeck = getActiveCards(state);
+export function getScheduledQueuePlan(state) {
+  const sourceDeck = getActiveCards(state);
   const used = new Set();
-  const newCards = state.sourceDeck.filter(cardData => getSchedulerState(state, cardData._i).seenCount === 0);
-  const reviewCards = state.sourceDeck
+  const newCards = sourceDeck.filter(cardData => getSchedulerState(state, cardData._i).seenCount === 0);
+  const reviewCards = sourceDeck
     .filter(cardData => getSchedulerState(state, cardData._i).seenCount > 0)
     .filter(cardData => getMastery(state, cardData._i) !== "mastered")
     .filter(cardData => isReviewDue(state, cardData._i))
     .sort((a, b) => compareRank(state, a, b));
-  const futureReviewCards = state.sourceDeck
+  const futureReviewCards = sourceDeck
     .filter(cardData => getSchedulerState(state, cardData._i).seenCount > 0)
     .filter(cardData => getMastery(state, cardData._i) !== "mastered")
     .filter(cardData => !reviewCards.some(review => review._i === cardData._i))
     .filter(cardData => !isCoolingMiss(state, cardData._i))
     .sort((a, b) => compareRank(state, a, b));
-  const coolingReviewCards = state.sourceDeck
+  const coolingReviewCards = sourceDeck
     .filter(cardData => getSchedulerState(state, cardData._i).seenCount > 0)
     .filter(cardData => getMastery(state, cardData._i) !== "mastered")
     .filter(cardData => !reviewCards.some(review => review._i === cardData._i))
@@ -402,6 +409,16 @@ function buildScheduledQueue(state, storageKeys) {
   queue.push(...takeCards(state, futureReviewCards, ADAPTIVE_QUEUE_SIZE - queue.length, used));
   if (!queue.length) queue.push(...takeCards(state, coolingReviewCards, ADAPTIVE_QUEUE_SIZE, used));
   if (state.orderMode === "shuffle") shuffleArray(queue);
+  return queue.map(cardData => ({
+    cardIndex: cardData._i,
+    reason: cardData.waveReason || getCardReason(state, cardData._i)
+  }));
+}
+
+function buildScheduledQueue(state, storageKeys) {
+  state.sourceDeck = getActiveCards(state);
+  const queue = getScheduledQueuePlan(state)
+    .map(cardData => makeScheduledCard(state, cardData.cardIndex, cardData.reason));
   state.currentQueue = queue;
   state.currentIndex = 0;
   saveCurrentQueue(state, storageKeys);
@@ -457,7 +474,7 @@ function getNextMasteryAfterLearning(state, previous, schedulerState) {
   return "unfamiliar";
 }
 
-function getRepeatDelay(level, remaining) {
+export function getRepeatDelay(level, remaining) {
   const target = level === "unfamiliar"
     ? MIN_MISSED_REPEAT_GAP
     : level === "somewhat familiar"

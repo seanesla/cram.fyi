@@ -166,15 +166,23 @@
     border-color: #8bd3ff;
     font-weight: 750;
   }
-  .wave-note {
+  .wave-note,
+  .mastery-eta {
     max-width: min(92vw, 720px);
     min-height: 20px;
-    margin: -6px 0 12px;
     color: #9da8b3;
     font-size: 0.82rem;
     line-height: 1.4;
     text-align: center;
   }
+  .wave-note { margin: -6px 0 4px; }
+  .mastery-eta {
+    margin: 0 0 12px;
+    color: #c7d2de;
+    font-variant-numeric: tabular-nums;
+  }
+  .mastery-eta[data-confidence="low"] { color: #ffcf70; }
+  .mastery-eta[data-confidence="high"] { color: #7ee787; }
   .hint {
     margin-top: 18px;
     color: #7b8794;

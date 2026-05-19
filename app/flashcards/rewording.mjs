@@ -48,6 +48,8 @@ export function saveGeneratedVariants(state, storageKeys) {
 }
 
 export function createRewordingController({ state, storageKeys, getMastery, getSchedulerState, getCurrentCard, render }) {
+  let requestGeneration = 0;
+
   function getGeneratedVariants(cardIndex) {
     return state.generatedVariants.get(cardIndex) || [];
   }
@@ -93,6 +95,7 @@ export function createRewordingController({ state, storageKeys, getMastery, getS
     if (!options.priority && state.pendingRewords.size >= MAX_BACKGROUND_REWORDS) return;
 
     const cardIndex = cardData._i;
+    const generationAtStart = requestGeneration;
     const request = fetch("/api/reword-card", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -106,6 +109,7 @@ export function createRewordingController({ state, storageKeys, getMastery, getS
     })
       .then(async response => {
         const data = await response.json().catch(() => ({}));
+        if (generationAtStart !== requestGeneration) return;
         if (!response.ok) throw new Error(data.error || "Could not reword card.");
         const cleaned = Array.isArray(data.variants) ? cleanVariants(data.variants) : [];
         if (!cleaned.length) throw new Error("No usable reworded prompts returned.");
@@ -114,15 +118,27 @@ export function createRewordingController({ state, storageKeys, getMastery, getS
         renderIfCurrentCard(cardIndex);
       })
       .catch(() => {
+        if (generationAtStart !== requestGeneration) return;
         state.failedRewords.add(cardIndex);
         renderIfCurrentCard(cardIndex);
       })
       .finally(() => {
+        if (generationAtStart !== requestGeneration) return;
         state.pendingRewords.delete(cardIndex);
         prefetchUpcomingRewords();
       });
 
     state.pendingRewords.set(cardIndex, request);
+  }
+
+  function clearGeneratedRewords() {
+    requestGeneration += 1;
+    state.generatedVariants = new Map();
+    state.variantIndexes = new Map();
+    state.failedRewords = new Set();
+    state.pendingRewords = new Map();
+    saveGeneratedVariants(state, storageKeys);
+    saveVariantIndexes(state, storageKeys);
   }
 
   function prefetchUpcomingRewords() {
@@ -147,7 +163,8 @@ export function createRewordingController({ state, storageKeys, getMastery, getS
     getCardText,
     queueRewordIfNeeded,
     prefetchUpcomingRewords,
-    rotateVariant
+    rotateVariant,
+    clearGeneratedRewords
   };
 }
 

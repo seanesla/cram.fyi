@@ -26,6 +26,7 @@ import {
   undoLastMark
 } from "./flashcards/scheduler.mjs";
 import { renderStudyGuide, updateStudyGuideTree } from "./flashcards/study-guide.mjs";
+import { createMasteryEtaController } from "./flashcards/mastery-eta.mjs";
 import { escapeHtml } from "./shared/html.mjs";
 import {
   GLOBAL_STORAGE_KEYS,
@@ -79,10 +80,12 @@ const els = {
   leftCount: document.getElementById("leftCount"),
   totalCount: document.getElementById("totalCount"),
   undoBtn: document.getElementById("undo"),
+  regenerateRewords: document.getElementById("regenerateRewords"),
   toggleKnowns: document.getElementById("toggleKnowns"),
   studyGuideOrder: document.getElementById("studyGuideOrder"),
   shuffleOrder: document.getElementById("shuffleOrder"),
   waveNote: document.getElementById("waveNote"),
+  masteryEta: document.getElementById("masteryEta"),
   studyShell: document.querySelector(".study-shell"),
   guideBody: document.getElementById("guideBody"),
   chatLog: document.getElementById("chatLog"),
@@ -103,6 +106,11 @@ const els = {
 };
 
 let rewording = createRewording();
+const masteryEta = createMasteryEtaController({
+  state,
+  getStorageKeys: () => storageKeys,
+  element: els.masteryEta
+});
 
 const chat = createChatHelper({
   elements: els,
@@ -139,6 +147,7 @@ function render() {
   els.studyGuideOrder.classList.toggle("active", state.orderMode === "study");
   els.shuffleOrder.classList.toggle("active", state.orderMode === "shuffle");
   els.waveNote.textContent = getQueueNote(state);
+  masteryEta.render();
 
   if (state.currentQueue.length === 0) {
     els.cardWrap.classList.add("hidden");
@@ -232,11 +241,13 @@ function loadSavedStudyState() {
 }
 
 function markAndRender(value) {
+  masteryEta.recordAnswer(value);
   markCard(state, storageKeys, value, { rotateVariant: rewording.rotateVariant });
   render();
 }
 
 function undoAndRender() {
+  if (state.history.length) masteryEta.undoLatestAnswer();
   undoLastMark(state, storageKeys);
   render();
 }
@@ -256,7 +267,13 @@ function toggleMasteredAndRender() {
 
 function resetProgressAndRender() {
   resetStudyProgress(state, storageKeys);
+  masteryEta.clear();
   rewording = createRewording();
+  render();
+}
+
+function regenerateRewordsAndRender() {
+  rewording.clearGeneratedRewords();
   render();
 }
 
@@ -313,6 +330,7 @@ function bindStudyEvents() {
   document.getElementById("markKnown").addEventListener("click", () => markAndRender("known"));
   document.getElementById("undo").addEventListener("click", undoAndRender);
   document.getElementById("shuffle").addEventListener("click", shuffleAndRender);
+  els.regenerateRewords.addEventListener("click", regenerateRewordsAndRender);
   els.shuffleOrder.addEventListener("click", shuffleAndRender);
   els.studyGuideOrder.addEventListener("click", switchToStudyOrderAndRender);
   els.toggleKnowns.addEventListener("click", toggleMasteredAndRender);

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseAcceptedRewordVariants } from "./rewording-validation.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const START_PORT = Number(process.env.PORT || 5174);
@@ -19,6 +20,10 @@ const CODEX_WORKSPACE_ROOTS = DATA_ROOT_EXISTS ? [REPO_ROOT, DATA_ROOT] : [REPO_
 const REWORD_MODEL = "gpt-5.4-mini";
 const REWORD_EFFORT = "low";
 const MAX_REWORD_CONTEXT_CHARS = 1800;
+const ETA_MODEL = REWORD_MODEL;
+const ETA_EFFORT = "low";
+const ETA_CODEX_CWD = ROOT;
+const ETA_CODEX_WORKSPACE_ROOTS = [ROOT];
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -139,11 +144,271 @@ async function handleRewordCard(req, res) {
     developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
     prompt: buildRewordPrompt(card)
   });
-  const variants = parseRewordVariants(reply, card.front);
+  const variants = parseAcceptedRewordVariants(reply, card.front);
   if (!variants.length) {
     return sendJson(res, 502, { error: "Codex did not return usable variants." });
   }
   return sendJson(res, 200, { variants, model: REWORD_MODEL });
+}
+
+async function handleMasteryEta(req, res) {
+  const body = await readJson(req);
+  const stats = sanitizeMasteryEtaStats(body.stats);
+  if (!stats) return sendJson(res, 400, { error: "Valid mastery ETA stats are required." });
+
+  const fallback = buildMathOnlyMasteryEta(stats);
+  try {
+    const reply = await codex.askOneShot({
+      sessionId: `mastery-eta-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      model: ETA_MODEL,
+      effort: ETA_EFFORT,
+      summary: "none",
+      cwd: ETA_CODEX_CWD,
+      workspaceRoots: ETA_CODEX_WORKSPACE_ROOTS,
+      baseInstructions: buildMasteryEtaInstructions(),
+      developerInstructions: "Return only strict JSON. Do not run tools. Do not browse. Do not edit files.",
+      prompt: buildMasteryEtaPrompt(stats)
+    });
+    const parsed = JSON.parse(String(reply || "").trim());
+    const interpretation = validateMasteryEtaInterpretation(parsed, stats);
+    return sendJson(res, 200, { interpretation, source: "codex", model: ETA_MODEL });
+  } catch (error) {
+    return sendJson(res, 200, {
+      interpretation: fallback,
+      source: "math",
+      error: formatMasteryEtaError(error)
+    });
+  }
+}
+
+function sanitizeMasteryEtaStats(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const totalSelected = cleanInteger(input.totalSelected, 0, 100000);
+  const mastered = cleanInteger(input.mastered, 0, totalSelected);
+  const fastestPathAnswers = cleanInteger(input.fastestPathAnswers, 0, 1000000);
+  const mathAnswerRange = cleanRange(input.mathAnswerRange, { min: fastestPathAnswers, max: 1000000, allowNull: false });
+  if (!mathAnswerRange) return null;
+  const mathAnswerBounds = cleanBounds(input.mathAnswerBounds, mathAnswerRange);
+  const mathMinuteRange = cleanRange(input.mathMinuteRange, { min: 0, max: 1000000, allowNull: true });
+  const mathMinuteBounds = mathMinuteRange ? cleanBounds(input.mathMinuteBounds, mathMinuteRange) : null;
+
+  return {
+    version: 1,
+    totalSelected,
+    mastered,
+    tierCounts: {
+      unfamiliar: cleanInteger(input.tierCounts?.unfamiliar, 0, totalSelected),
+      somewhatFamiliar: cleanInteger(input.tierCounts?.somewhatFamiliar, 0, totalSelected),
+      familiar: cleanInteger(input.tierCounts?.familiar, 0, totalSelected),
+      mastered: cleanInteger(input.tierCounts?.mastered, 0, totalSelected)
+    },
+    remainingCards: cleanInteger(input.remainingCards, 0, totalSelected),
+    currentQueue: {
+      remainingInQueue: cleanInteger(input.currentQueue?.remainingInQueue, 0, 100000),
+      new: cleanInteger(input.currentQueue?.new, 0, 100000),
+      review: cleanInteger(input.currentQueue?.review, 0, 100000),
+      missedLastRound: cleanInteger(input.currentQueue?.missedLastRound, 0, 100000),
+      almostMastered: cleanInteger(input.currentQueue?.almostMastered, 0, 100000)
+    },
+    fastestPathAnswers,
+    mathAnswerRange,
+    mathAnswerBounds,
+    mathMinuteRange,
+    mathMinuteBounds,
+    recentAccuracy: cleanRatio(input.recentAccuracy),
+    historicalAccuracy: cleanRatio(input.historicalAccuracy),
+    recentMedianSeconds: cleanOptionalNumber(input.recentMedianSeconds, 1, 3600),
+    historicalMedianSeconds: cleanOptionalNumber(input.historicalMedianSeconds, 1, 3600),
+    recentAnswersPerMinute: cleanOptionalNumber(input.recentAnswersPerMinute, 0.01, 600),
+    historicalAnswersPerMinute: cleanOptionalNumber(input.historicalAnswersPerMinute, 0.01, 600),
+    timing: {
+      recentEvents: cleanInteger(input.timing?.recentEvents, 0, 100000),
+      historicalAnswers: cleanInteger(input.timing?.historicalAnswers, 0, 1000000),
+      idleClipped: cleanInteger(input.timing?.idleClipped, 0, 1000000)
+    },
+    confidenceFlags: cleanConfidenceFlags(input.confidenceFlags)
+  };
+}
+
+function buildMasteryEtaInstructions() {
+  return [
+    "You interpret aggregate flashcard mastery ETA stats for cram.fyi.",
+    "You are not given card fronts, backs, topics, study guides, file paths, or private class content.",
+    "Use only the numeric stats packet in the prompt.",
+    "Choose a clear ballpark range inside the provided math guardrails.",
+    "Return only JSON shaped exactly like:",
+    "{\"label\":\"about 45-70 min · 130-190 answers\",\"answerRange\":{\"low\":130,\"high\":190},\"minuteRange\":{\"low\":45,\"high\":70},\"confidence\":\"medium\",\"reason\":\"short reason\"}",
+    "Use confidence as one of low, medium, or high.",
+    "If minuteRange in the packet is null, return minuteRange null and make the label answer-count-only.",
+    "The label must not include the prefix Mastery ETA:."
+  ].join("\n");
+}
+
+function buildMasteryEtaPrompt(stats) {
+  return [
+    "Interpret this sanitized aggregate stats packet.",
+    "",
+    JSON.stringify(stats, null, 2),
+    "",
+    "Rules:",
+    "- answerRange.low must be at least mathAnswerRange.low.",
+    "- answerRange.high must be no more than mathAnswerRange.high.",
+    "- minuteRange must stay inside mathMinuteRange when mathMinuteRange is present.",
+    "- Widen the chosen range when confidenceFlags include lowAccuracy or unstableAccuracy.",
+    "- Keep reason under 140 characters.",
+    "- Return only strict JSON with no Markdown."
+  ].join("\n");
+}
+
+function validateMasteryEtaInterpretation(value, stats) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Mastery ETA JSON must be an object.");
+  const answerRange = readRangeInside(value.answerRange, stats.mathAnswerRange.low, stats.mathAnswerRange.high);
+  if (!answerRange) throw new Error("Mastery ETA answer range is outside math bounds.");
+  const minuteRange = stats.mathMinuteRange
+    ? readRangeInside(value.minuteRange, stats.mathMinuteRange.low, stats.mathMinuteRange.high)
+    : null;
+  if (stats.mathMinuteRange && !minuteRange) throw new Error("Mastery ETA minute range is outside math bounds.");
+  const confidence = ["low", "medium", "high"].includes(value.confidence) ? value.confidence : "";
+  if (!confidence) throw new Error("Mastery ETA confidence is invalid.");
+  const rawLabel = cleanShortText(value.label, 140);
+  const reason = cleanShortText(value.reason, 180);
+  if (!rawLabel || !reason) throw new Error("Mastery ETA label and reason are required.");
+  const label = minuteRange
+    ? `about ${formatEtaMinuteRange(minuteRange)} · ${formatEtaAnswerRange(answerRange)}`
+    : `about ${formatEtaAnswerRange(answerRange)}`;
+  return { label, answerRange, minuteRange, confidence, reason };
+}
+
+function buildMathOnlyMasteryEta(stats) {
+  if (stats.confidenceFlags.includes("simulationCapHit")) {
+    return {
+      label: `estimate too uncertain · fastest path: ${formatEtaAnswerCount(stats.fastestPathAnswers)}`,
+      answerRange: { low: stats.fastestPathAnswers, high: stats.fastestPathAnswers },
+      minuteRange: null,
+      confidence: "low",
+      reason: "The local scheduler simulation hit its answer cap."
+    };
+  }
+  if (!stats.mathMinuteRange) {
+    return {
+      label: `answer a few more cards to estimate time · fastest path: ${formatEtaAnswerCount(stats.fastestPathAnswers)}`,
+      answerRange: stats.mathAnswerRange,
+      minuteRange: null,
+      confidence: "low",
+      reason: "There is not enough timing history yet."
+    };
+  }
+  const confidence = stats.confidenceFlags.includes("lowAccuracy") || stats.confidenceFlags.includes("unstableAccuracy")
+    ? "low"
+    : "medium";
+  return {
+    label: `about ${formatEtaMinuteRange(stats.mathMinuteRange)} · ${formatEtaAnswerRange(stats.mathAnswerRange)}`,
+    answerRange: stats.mathAnswerRange,
+    minuteRange: stats.mathMinuteRange,
+    confidence,
+    reason: "Codex was unavailable, so cram.fyi used the local math estimate."
+  };
+}
+
+function cleanRange(value, { min, max, allowNull }) {
+  if (value === null && allowNull) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const low = cleanInteger(value.low, min, max);
+  const high = cleanInteger(value.high, low, max);
+  if (low < min || high > max || low > high) return null;
+  return { low, high };
+}
+
+function readRangeInside(value, min, max) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const low = Number(value.low);
+  const high = Number(value.high);
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+  const roundedLow = Math.round(low);
+  const roundedHigh = Math.round(high);
+  if (roundedLow !== low || roundedHigh !== high) return null;
+  if (roundedLow < min || roundedHigh > max || roundedLow > roundedHigh) return null;
+  return { low: roundedLow, high: roundedHigh };
+}
+
+function cleanBounds(value, range) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      lower: range.low,
+      base: Math.round((range.low + range.high) / 2),
+      upper: range.high
+    };
+  }
+  const lower = cleanInteger(value.lower, range.low, range.high);
+  const base = cleanInteger(value.base, lower, range.high);
+  const upper = cleanInteger(value.upper, base, range.high);
+  return { lower, base, upper };
+}
+
+function cleanInteger(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, Math.round(number)));
+}
+
+function cleanRatio(value) {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.min(1, Math.max(0, Math.round(number * 100) / 100));
+}
+
+function cleanOptionalNumber(value, min, max) {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.min(max, Math.max(min, Math.round(number * 10) / 10));
+}
+
+function cleanConfidenceFlags(value) {
+  const allowed = new Set([
+    "noTimingData",
+    "tooEarly",
+    "noPaceData",
+    "lowAccuracy",
+    "unstableAccuracy",
+    "simulationCapHit",
+    "shuffleMode",
+    "idleClipped"
+  ]);
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => String(item || ""))
+    .filter(item => allowed.has(item))
+    .slice(0, 12);
+}
+
+function cleanShortText(value, maxLength) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function formatEtaAnswerCount(count) {
+  return `${count} ${count === 1 ? "answer" : "answers"}`;
+}
+
+function formatEtaAnswerRange(range) {
+  if (range.low === range.high) return formatEtaAnswerCount(range.low);
+  return `${range.low}-${range.high} answers`;
+}
+
+function formatEtaMinuteRange(range) {
+  if (range.low === range.high) return `${range.low} min`;
+  return `${range.low}-${range.high} min`;
+}
+
+function formatMasteryEtaError(error) {
+  const message = error && error.message ? error.message : String(error);
+  if (/not logged in|requiresOpenaiAuth|unauthorized/i.test(message)) return "Codex is not connected.";
+  return "Codex interpretation was unavailable.";
 }
 
 function normalizeCard(card) {
@@ -199,7 +464,10 @@ function buildRewordInstructions() {
     "The existing back answer is the target answer. Every generated front must be answerable by that exact back answer.",
     "Generate alternate prompts that make the student understand the same fact instead of memorizing the same wording.",
     "Never add new facts, change the answer target, or ask for information not already answered by the fixed back answer.",
-    "Return only valid JSON shaped like {\"variants\":[\"...\",\"...\",\"...\"]}."
+    "For each variant, judge whether the unchanged back answer still directly answers the new front.",
+    "Set fixedBackStillAnswers to true only when the fixed back would be a correct answer to that exact new front.",
+    "Set answerTargetChanged to true if the new front asks for a different kind of answer than the original front.",
+    "Return only valid JSON shaped like {\"variants\":[{\"front\":\"...\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false}]}."
   ].join("\n");
 }
 
@@ -220,10 +488,12 @@ function buildRewordPrompt(card) {
     "- The fixed back answer must directly answer every generated front.",
     "- Preserve the subject of the original front. If the original asks about Charles Lyell, the generated front must still ask about Charles Lyell.",
     "- Preserve the answer type. If the fixed back is an explanation, ask for an explanation, not a person, date, place, or term.",
+    "- If a generated front would be answered by a term/name but the fixed back is an explanation, mark answerTargetChanged true.",
+    "- Be strict. When unsure whether the fixed back still answers the new front, set fixedBackStillAnswers false.",
     "- Do not include the answer or obvious answer words in the front.",
     "- Do not make the prompt longer than the original unless needed for clarity.",
     "- Use natural wording. Do not mention AI, variants, or rewording.",
-    "- Return only JSON: {\"variants\":[\"prompt 1\",\"prompt 2\",\"prompt 3\"]}"
+    "- Return only JSON: {\"variants\":[{\"front\":\"prompt 1\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false},{\"front\":\"prompt 2\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false},{\"front\":\"prompt 3\",\"fixedBackStillAnswers\":true,\"answerTargetChanged\":false}]}"
   ].join("\n");
 }
 
@@ -242,37 +512,6 @@ function getStudyGuideExcerpt(topic) {
   while (end < lines.length && !/^#{1,6}\s+/.test(lines[end])) end += 1;
   const excerpt = lines.slice(start, Math.min(end, start + 80)).join("\n").trim();
   return excerpt.slice(0, MAX_REWORD_CONTEXT_CHARS);
-}
-
-function parseRewordVariants(text, originalFront) {
-  const raw = String(text || "").trim();
-  const candidates = [raw];
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) candidates.push(fenced[1].trim());
-  const object = raw.match(/\{[\s\S]*\}/);
-  if (object) candidates.push(object[0]);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      const variants = Array.isArray(parsed.variants) ? parsed.variants : [];
-      const seen = new Set();
-      return variants
-        .map(value => String(value || "").replace(/\s+/g, " ").trim())
-        .filter(value => value && value.length <= 260)
-        .filter(value => value.toLowerCase() !== String(originalFront || "").trim().toLowerCase())
-        .filter(value => {
-          const key = value.toLowerCase();
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        })
-        .slice(0, 3);
-    } catch {
-      continue;
-    }
-  }
-  return [];
 }
 
 function formatError(error) {
@@ -421,11 +660,21 @@ class CodexBridge {
     }
   }
 
-  async askOneShot({ sessionId, model, effort, summary, prompt, baseInstructions, developerInstructions }) {
+  async askOneShot({
+    sessionId,
+    model,
+    effort,
+    summary,
+    prompt,
+    baseInstructions,
+    developerInstructions,
+    cwd = CODEX_CWD,
+    workspaceRoots = CODEX_WORKSPACE_ROOTS
+  }) {
     await this.ensureReady();
     const response = await this.request("thread/start", {
-      cwd: CODEX_CWD,
-      runtimeWorkspaceRoots: CODEX_WORKSPACE_ROOTS,
+      cwd,
+      runtimeWorkspaceRoots: workspaceRoots,
       approvalPolicy: "never",
       sandbox: "read-only",
       baseInstructions,
@@ -442,6 +691,8 @@ class CodexBridge {
         effort,
         summary,
         prompt,
+        cwd,
+        workspaceRoots,
         onDelta: () => {},
         onReasoningSummaryDelta: () => {}
       });
@@ -450,7 +701,16 @@ class CodexBridge {
     }
   }
 
-  async startTurn(session, { model, effort, summary, prompt, onDelta, onReasoningSummaryDelta }) {
+  async startTurn(session, {
+    model,
+    effort,
+    summary,
+    prompt,
+    onDelta,
+    onReasoningSummaryDelta,
+    cwd = CODEX_CWD,
+    workspaceRoots = CODEX_WORKSPACE_ROOTS
+  }) {
     let fullText = "";
     const active = {
       turnId: null,
@@ -472,8 +732,8 @@ class CodexBridge {
       const response = await this.request("turn/start", {
         threadId: session.threadId,
         input: [{ type: "text", text: prompt, text_elements: [] }],
-        cwd: CODEX_CWD,
-        runtimeWorkspaceRoots: CODEX_WORKSPACE_ROOTS,
+        cwd,
+        runtimeWorkspaceRoots: workspaceRoots,
         approvalPolicy: "never",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         model: model || null,
@@ -718,6 +978,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/reword-card") {
       return handleRewordCard(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/mastery-eta") {
+      return handleMasteryEta(req, res);
     }
     if (req.method !== "GET") return sendText(res, 405, "Method not allowed");
     return serveStatic(url.pathname, res);
