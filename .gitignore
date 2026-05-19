@@ -8,4 +8,4 @@ npm-debug.log*
 # Local-only private class material. Keep real course files here if you want
 # the app repo and class folders in one place.
 classes/*
-!classes/README.md
+!classes/.gitkeep
