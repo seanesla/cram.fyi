@@ -508,52 +508,7 @@
 <aside class="sidebar guide-sidebar" id="guideSidebar">
   <div class="sidebar-title">study guide</div>
   <div class="guide-body" id="guideBody">
-    <div class="guide-disclaimer">Disclaimer: This is a small demo study guide for the public repo. It is meant to show the structure of the app and should be replaced with your own private course material when you use the app for real studying.</div>
-
-    <section class="guide-section" data-guide-section="Study Workflow">
-      <div class="guide-section-title">Study Workflow</div>
-      <ul class="guide-list">
-        <li data-guide-topics="Study Workflow">Understand how a flashcard deck is reviewed from top to bottom, or in a shuffled order.</li>
-        <li data-guide-topics="Study Workflow">Recognize what the mastery labels mean and how they change as you review cards.</li>
-        <li data-guide-topics="Study Workflow,Chat Assistant">Describe how queueing lets you keep typing while the assistant is still answering.</li>
-      </ul>
-    </section>
-
-    <section class="guide-section" data-guide-section="Cards and Content">
-      <div class="guide-section-title">Cards and Content</div>
-      <ul class="guide-list">
-        <li data-guide-topics="Cards and Content">Understand how a flashcard prompt should be short, focused, and tied to one idea.</li>
-        <li data-guide-topics="Cards and Content">Recognize why the assistant should answer in plain language for a beginner.</li>
-        <li data-guide-topics="Cards and Content">Describe how a card can be rewritten in a new wording without changing the core idea.</li>
-      </ul>
-    </section>
-
-    <section class="guide-section" data-guide-section="Chat Assistant">
-      <div class="guide-section-title">Chat Assistant</div>
-      <ul class="guide-list">
-        <li data-guide-topics="Chat Assistant">Understand the model selector and reasoning effort selector.</li>
-        <li data-guide-topics="Chat Assistant">Recognize when to use a fresh chat instead of continuing an older one.</li>
-        <li data-guide-topics="Chat Assistant">Describe how slash commands and the command menu help you switch modes quickly.</li>
-      </ul>
-    </section>
-
-    <section class="guide-section" data-guide-section="Progress Tracking">
-      <div class="guide-section-title">Progress Tracking</div>
-      <ul class="guide-list">
-        <li data-guide-topics="Progress Tracking">Understand the context meter and why it shows approximate token usage.</li>
-        <li data-guide-topics="Progress Tracking">Recognize why compaction helps when a thread gets too long.</li>
-        <li data-guide-topics="Progress Tracking">Describe how the queue count shows messages waiting to be sent.</li>
-      </ul>
-    </section>
-
-    <section class="guide-section" data-guide-section="Sharing and Deployment">
-      <div class="guide-section-title">Sharing and Deployment</div>
-      <ul class="guide-list">
-        <li data-guide-topics="Sharing and Deployment">Understand why demo content should stay separate from private material.</li>
-        <li data-guide-topics="Sharing and Deployment">Recognize the difference between a public app shell and a private study deck.</li>
-        <li data-guide-topics="Sharing and Deployment">Describe why a clean repo should not include any sensitive files or course content.</li>
-      </ul>
-    </section>
+    <div class="guide-disclaimer">Loading active study guide...</div>
   </div>
   <div class="resize-handle guide-resize" data-resize-sidebar="left" title="Drag to resize study guide"></div>
 </aside>
@@ -656,51 +611,25 @@
 </main>
 
 <script>
-const allCards = [
-  {topic: "Study Workflow", front: "What does guide order do?", back: "It keeps cards grouped in the same order as the outline on the left sidebar."},
-  {topic: "Study Workflow", front: "What does shuffle do?", back: "It randomizes the deck so you see cards in a different order."},
-  {topic: "Study Workflow", front: "What do the mastery levels show?", back: "They show whether a card is unfamiliar, somewhat familiar, familiar, or mastered."},
-  {topic: "Study Workflow", front: "Why use queueing in the chat sidebar?", back: "So you can keep typing even while the assistant is still responding."},
-  {topic: "Cards and Content", front: "What makes a good flashcard prompt?", back: "It should be short, focused, and tied to one idea."},
-  {topic: "Cards and Content", front: "Why should a flashcard answer be plain language?", back: "Clear wording helps a beginner understand the idea instead of memorizing jargon."},
-  {topic: "Cards and Content", front: "What is the point of rewording a card?", back: "It tests the same idea without depending on one exact sentence."},
-  {topic: "Cards and Content", front: "What should you do if a card feels too broad?", back: "Split it into smaller cards that each test one idea."},
-  {topic: "Chat Assistant", front: "What does the model selector control?", back: "It chooses which Codex model answers your chat messages."},
-  {topic: "Chat Assistant", front: "What does reasoning effort control?", back: "It adjusts how much reasoning the model uses before answering."},
-  {topic: "Chat Assistant", front: "When should you start a new chat?", back: "When you want a fresh context or the old one is getting too long."},
-  {topic: "Chat Assistant", front: "What do slash commands do?", back: "They open quick actions like model selection, compaction, and chat reset."},
-  {topic: "Progress Tracking", front: "What does the context meter show?", back: "An approximate share of the current thread context that is in use."},
-  {topic: "Progress Tracking", front: "Why is compaction useful?", back: "It shortens the thread when it starts getting too long."},
-  {topic: "Progress Tracking", front: "What does the queue counter mean?", back: "It shows how many messages are waiting to be sent."},
-  {topic: "Progress Tracking", front: "Why keep chat logs after refresh?", back: "So you can keep the visible conversation without losing the thread immediately."},
-  {topic: "Sharing and Deployment", front: "Why keep demo content separate from private content?", back: "So the public repo stays safe and does not expose sensitive material."},
-  {topic: "Sharing and Deployment", front: "What belongs in a public app shell?", back: "The interface, behavior, and demo data that show how the app works."},
-  {topic: "Sharing and Deployment", front: "What should stay private?", back: "Class notes, course files, credentials, and personal data."},
-  {topic: "Sharing and Deployment", front: "What is the point of a clean public repo?", back: "It lets other people see and use the tool without seeing anything sensitive."}
-];
+let allCards = [];
 
-const SELECTED_KEY = "agenticFlashcards_selected_v1";
-const SIZE_KEY = "agenticFlashcards_size_v1";
-const OLD_STATUS_KEY = "agenticFlashcards_status_v1";
-const MASTERY_KEY = "agenticFlashcards_mastery_v1";
-const VARIANT_KEY = "agenticFlashcards_variant_v1";
-const SHOW_KNOWNS_KEY = "agenticFlashcards_showKnowns_v1";
-const POSITION_KEY = "agenticFlashcards_position_v1";
-const ORDER_MODE_KEY = "agenticFlashcards_orderMode_v1";
-const WAVE_SIZE_KEY = "agenticFlashcards_waveSize_v1";
-const WAVE_START_KEY = "agenticFlashcards_waveStart_v1";
+let storagePrefix = "agenticFlashcards_examples";
+let SELECTED_KEY = `${storagePrefix}_selected_v1`;
+let SIZE_KEY = `${storagePrefix}_size_v1`;
+let OLD_STATUS_KEY = `${storagePrefix}_status_v1`;
+let MASTERY_KEY = `${storagePrefix}_mastery_v1`;
+let VARIANT_KEY = `${storagePrefix}_variant_v1`;
+let SHOW_KNOWNS_KEY = `${storagePrefix}_showKnowns_v1`;
+let POSITION_KEY = `${storagePrefix}_position_v1`;
+let ORDER_MODE_KEY = `${storagePrefix}_orderMode_v1`;
+let WAVE_SIZE_KEY = `${storagePrefix}_waveSize_v1`;
+let WAVE_START_KEY = `${storagePrefix}_waveStart_v1`;
 const LEFT_SIDEBAR_WIDTH_KEY = "agenticFlashcards_leftSidebarWidth_v1";
 const RIGHT_SIDEBAR_WIDTH_KEY = "agenticFlashcards_rightSidebarWidth_v1";
 const MASTERY_LEVELS = ["unfamiliar", "somewhat familiar", "familiar", "mastered"];
 const MASTERY_CLASSES = ["unfamiliar", "somewhat", "familiar", "mastered"];
 
-const topicSections = {
-  "Study Workflow": "Study Workflow",
-  "Cards and Content": "Cards and Content",
-  "Chat Assistant": "Chat Assistant",
-  "Progress Tracking": "Progress Tracking",
-  "Sharing and Deployment": "Sharing and Deployment"
-};
+let topicSections = {};
 
 let mastery = loadMastery();
 let variants = loadVariants();
@@ -739,8 +668,8 @@ const waveSize = document.getElementById("waveSize");
 const waveNote = document.getElementById("waveNote");
 const studyShell = document.querySelector(".study-shell");
 const guideBody = document.getElementById("guideBody");
-const guideSections = [...document.querySelectorAll(".guide-section")];
-const guideItems = [...document.querySelectorAll("[data-guide-topics]")];
+let guideSections = [];
+let guideItems = [];
 const chatLog = document.getElementById("chatLog");
 const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
@@ -954,6 +883,119 @@ function render() {
   });
   renderHelperContext();
   updateStudyGuideTree(current.topic);
+}
+
+async function loadStudyData() {
+  try {
+    const [deckResponse, guideResponse] = await Promise.all([
+      fetch("/api/deck"),
+      fetch("/api/study-guide")
+    ]);
+    if (!deckResponse.ok) throw new Error("Could not load flashcards.");
+    const deckData = await deckResponse.json();
+    const guideData = guideResponse.ok ? await guideResponse.json() : { markdown: "" };
+    configureStorageKeys(String(deckData.storageKey || "default"));
+    allCards = Array.isArray(deckData.cards) ? deckData.cards : [];
+    renderStudyGuide(String(guideData.markdown || ""), String(deckData.dataSource || "active data"));
+  } catch (error) {
+    allCards = [];
+    guideBody.innerHTML = `<div class="guide-disclaimer">${escapeHtml(error.message || "Could not load study data.")}</div>`;
+  }
+
+  selected = loadSelected();
+  mastery = loadMastery();
+  variants = loadVariants();
+  showKnowns = localStorage.getItem(SHOW_KNOWNS_KEY) === "true";
+  orderMode = loadOrderMode();
+  waveSizeValue = loadWaveSize();
+  waveStart = loadWaveStart();
+  index = loadPosition();
+  rebuildDeck();
+}
+
+function configureStorageKeys(sourceKey) {
+  storagePrefix = `agenticFlashcards_${sourceKey.replace(/[^a-zA-Z0-9_-]/g, "_") || "default"}`;
+  SELECTED_KEY = `${storagePrefix}_selected_v1`;
+  SIZE_KEY = `${storagePrefix}_size_v1`;
+  OLD_STATUS_KEY = `${storagePrefix}_status_v1`;
+  MASTERY_KEY = `${storagePrefix}_mastery_v1`;
+  VARIANT_KEY = `${storagePrefix}_variant_v1`;
+  SHOW_KNOWNS_KEY = `${storagePrefix}_showKnowns_v1`;
+  POSITION_KEY = `${storagePrefix}_position_v1`;
+  ORDER_MODE_KEY = `${storagePrefix}_orderMode_v1`;
+  WAVE_SIZE_KEY = `${storagePrefix}_waveSize_v1`;
+  WAVE_START_KEY = `${storagePrefix}_waveStart_v1`;
+}
+
+function renderStudyGuide(markdown, dataSource) {
+  const sections = parseStudyGuide(markdown);
+  topicSections = {};
+  const uniqueTopics = [...new Set(allCards.map(cardData => cardData.topic))];
+  uniqueTopics.forEach(topic => {
+    topicSections[topic] = sections.find(section => section.title === topic)?.title || topic;
+  });
+
+  if (!sections.length) {
+    guideBody.innerHTML = `<div class="guide-disclaimer">No study guide found for ${escapeHtml(dataSource)}.</div>`;
+  } else {
+    const first = sections[0];
+    const disclaimer = first.disclaimer
+      ? `<div class="guide-disclaimer">${escapeHtml(first.disclaimer)}</div>`
+      : `<div class="guide-disclaimer">Active data source: ${escapeHtml(dataSource)}</div>`;
+    guideBody.innerHTML = disclaimer + sections.map(section => `
+      <section class="guide-section" data-guide-section="${escapeHtml(section.title)}">
+        <div class="guide-section-title">${escapeHtml(section.title)}</div>
+        <ul class="guide-list">
+          ${section.items.map(item => `<li data-guide-topics="${escapeHtml(section.title)}">${escapeHtml(item)}</li>`).join("")}
+        </ul>
+      </section>
+    `).join("");
+  }
+  guideSections = [...document.querySelectorAll(".guide-section")];
+  guideItems = [...document.querySelectorAll("[data-guide-topics]")];
+}
+
+function parseStudyGuide(markdown) {
+  const lines = markdown.split(/\r?\n/).map(line => line.trim());
+  const sections = [];
+  let disclaimer = "";
+  let current = null;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    if (/^#\s+/.test(line)) continue;
+
+    const heading = line.match(/^#{2,6}\s+(.+)$/);
+    const plainHeading = !heading && isPlainSectionHeading(line, lines[i + 1] || "");
+    if (heading || plainHeading) {
+      current = { title: heading ? heading[1].trim() : line, items: [], disclaimer: sections.length === 0 ? disclaimer.trim() : "" };
+      sections.push(current);
+      continue;
+    }
+
+    const item = line.replace(/^[-*]\s+/, "");
+    if (current) current.items.push(item);
+    else disclaimer += `${item} `;
+  }
+  return sections.filter(section => section.title && section.items.length);
+}
+
+function isPlainSectionHeading(line, nextLine) {
+  if (!line || /^[-*]/.test(line)) return false;
+  if (!nextLine || /^[-*]/.test(nextLine)) return true;
+  if (line.length > 60) return false;
+  return !/[.!?]$/.test(line);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  }[char]));
 }
 
 function updateStudyGuideTree(topic) {
@@ -1772,8 +1814,8 @@ document.addEventListener("keydown", event => {
 
 loadSidebarWidths();
 restoreChatMessages();
-rebuildDeck();
 updateChatSettings();
+loadStudyData();
 checkCodexStatus();
 refreshSessionStatus();
 setInterval(refreshSessionStatus, 8000);

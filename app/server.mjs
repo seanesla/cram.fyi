@@ -1,14 +1,21 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const START_PORT = Number(process.env.PORT || 5174);
 const HOST = "127.0.0.1";
 const REPO_ROOT = normalize(join(ROOT, ".."));
-const STUDY_GUIDE_PATH = join(REPO_ROOT, "examples/demo-study-guide.md");
+const DEMO_DATA_ROOT = join(REPO_ROOT, "examples");
+const { dataRoot: DATA_ROOT, dataLabel: DATA_LABEL } = resolveDataRoot();
+const DATA_KEY = DATA_LABEL.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "default";
+const STUDY_GUIDE_PATH = join(DATA_ROOT, "study-guide.md");
+const FLASHCARDS_PATH = join(DATA_ROOT, "flashcards.json");
+const DATA_ROOT_EXISTS = await pathExists(DATA_ROOT);
+const CODEX_CWD = DATA_ROOT_EXISTS ? DATA_ROOT : REPO_ROOT;
+const CODEX_WORKSPACE_ROOTS = DATA_ROOT_EXISTS ? [REPO_ROOT, DATA_ROOT] : [REPO_ROOT];
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -17,7 +24,65 @@ const MIME = {
   ".json": "application/json; charset=utf-8"
 };
 
-const studyGuide = await readFile(STUDY_GUIDE_PATH, "utf8").catch(() => "");
+const studyGuide = await readStudyGuide();
+const flashcards = await loadFlashcards();
+
+async function readStudyGuide() {
+  const primary = await readFile(STUDY_GUIDE_PATH, "utf8").catch(() => "");
+  if (primary) return primary;
+  if (DATA_ROOT === DEMO_DATA_ROOT) {
+    return readFile(join(DEMO_DATA_ROOT, "demo-study-guide.md"), "utf8").catch(() => "");
+  }
+  return "";
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDataRoot() {
+  const args = process.argv.slice(2);
+  const classIndex = args.indexOf("--class");
+  const dataIndex = args.indexOf("--data");
+  const envData = process.env.AGENTIC_FLASHCARDS_DATA;
+
+  if (dataIndex !== -1 && args[dataIndex + 1]) {
+    const dataRoot = resolve(args[dataIndex + 1]);
+    return { dataRoot, dataLabel: dataRoot };
+  }
+  if (classIndex !== -1 && args[classIndex + 1]) {
+    const className = args[classIndex + 1].replace(/[^a-zA-Z0-9._-]/g, "");
+    const dataRoot = join(REPO_ROOT, "classes", className);
+    return { dataRoot, dataLabel: `classes/${className}` };
+  }
+  if (envData) {
+    const dataRoot = resolve(envData);
+    return { dataRoot, dataLabel: dataRoot };
+  }
+  return { dataRoot: DEMO_DATA_ROOT, dataLabel: "examples" };
+}
+
+async function loadFlashcards() {
+  const raw = await readFile(FLASHCARDS_PATH, "utf8").catch(() => "[]");
+  try {
+    const cards = JSON.parse(raw);
+    if (!Array.isArray(cards)) return [];
+    return cards
+      .map(card => ({
+        topic: String(card.topic || "General").trim() || "General",
+        front: String(card.front || "").trim(),
+        back: String(card.back || "").trim()
+      }))
+      .filter(card => card.front && card.back);
+  } catch {
+    return [];
+  }
+}
 
 async function handleChat(req, res) {
   const body = await readJson(req);
@@ -65,16 +130,18 @@ function buildTutorPrompt(body) {
 
 function buildBaseInstructions() {
   return [
-    "You are the live study helper inside Agentic Flashcards, a public study app demo.",
+    "You are the live study helper inside Agentic Flashcards.",
     "",
     "Hard rules:",
-    "- Be loyal to the demo study guide included below.",
+    "- Be loyal to the active study guide included below.",
     "- Explain like the student is new to the concept.",
     "- Keep the answer concise unless the student asks for more detail.",
     "- Do not edit files, run commands, browse, or ask for tool permissions.",
     "- If the student asks whether a card is relevant, answer only from the study guide/card context.",
     "",
-    "Demo study guide:",
+    `Active data source: ${DATA_LABEL}`,
+    "",
+    "Active study guide:",
     studyGuide || "(Study guide could not be loaded.)"
   ].join("\n");
 }
@@ -238,8 +305,8 @@ class CodexBridge {
       const response = await this.request("turn/start", {
         threadId: session.threadId,
         input: [{ type: "text", text: prompt, text_elements: [] }],
-        cwd: BIO_ROOT,
-        runtimeWorkspaceRoots: [BIO_ROOT],
+        cwd: CODEX_CWD,
+        runtimeWorkspaceRoots: CODEX_WORKSPACE_ROOTS,
         approvalPolicy: "never",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         model: model || null,
@@ -258,12 +325,12 @@ class CodexBridge {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
     const response = await this.request("thread/start", {
-      cwd: REPO_ROOT,
-      runtimeWorkspaceRoots: [REPO_ROOT],
+      cwd: CODEX_CWD,
+      runtimeWorkspaceRoots: CODEX_WORKSPACE_ROOTS,
       approvalPolicy: "never",
       sandbox: "read-only",
       baseInstructions: buildBaseInstructions(),
-      developerInstructions: "Use the current flashcard plus the demo study guide already in the thread instructions. Be concise, direct, and beginner-friendly.",
+      developerInstructions: "Use the current flashcard plus the active study guide already in the thread instructions. Be concise, direct, and beginner-friendly.",
       ephemeral: true,
       experimentalRawEvents: false,
       persistExtendedHistory: false
@@ -301,7 +368,7 @@ class CodexBridge {
   async start() {
     await this.assertChatGptLogin();
     this.proc = spawn("codex", ["app-server"], {
-      cwd: BIO_ROOT,
+      cwd: REPO_ROOT,
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.proc.stdout.setEncoding("utf8");
@@ -329,7 +396,7 @@ class CodexBridge {
 
   assertChatGptLogin() {
     return new Promise((resolve, reject) => {
-      const check = spawn("codex", ["login", "status"], { cwd: BIO_ROOT });
+      const check = spawn("codex", ["login", "status"], { cwd: REPO_ROOT });
       let out = "";
       let err = "";
       check.stdout.setEncoding("utf8");
@@ -444,6 +511,12 @@ const codex = new CodexBridge();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${HOST}:${START_PORT}`);
+    if (req.method === "GET" && url.pathname === "/api/deck") {
+      return sendJson(res, 200, { cards: flashcards, dataSource: DATA_LABEL, storageKey: DATA_KEY });
+    }
+    if (req.method === "GET" && url.pathname === "/api/study-guide") {
+      return sendJson(res, 200, { markdown: studyGuide, dataSource: DATA_LABEL, storageKey: DATA_KEY });
+    }
     if (req.method === "GET" && url.pathname === "/api/codex-status") {
       return sendJson(res, 200, await codex.status());
     }
@@ -484,6 +557,7 @@ function listenWithFallback(targetServer, port) {
   });
   targetServer.listen(port, HOST, () => {
     console.log(`Agentic Flashcards: http://${HOST}:${port}/flashcards.html`);
+    console.log(`Data source: ${DATA_LABEL}`);
     console.log("Live helper: Codex App Server bridge using your ChatGPT login.");
   });
 }

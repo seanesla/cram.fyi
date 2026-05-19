@@ -188,34 +188,59 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const OLD_STATUS_KEY = "agenticFlashcards_status_v1";
-const MASTERY_KEY = "agenticFlashcards_mastery_v1";
-const SELECTED_KEY = "agenticFlashcards_selected_v1";
-const SIZE_KEY = "agenticFlashcards_size_v1";
+let storagePrefix = "agenticFlashcards_examples";
+let OLD_STATUS_KEY = `${storagePrefix}_status_v1`;
+let MASTERY_KEY = `${storagePrefix}_mastery_v1`;
+let SELECTED_KEY = `${storagePrefix}_selected_v1`;
+let SIZE_KEY = `${storagePrefix}_size_v1`;
 const MASTERY_LEVELS = ["unfamiliar", "somewhat familiar", "familiar", "mastered"];
 
-const topicBlocks = [
-  {topic: "Study Workflow", section: "Study Workflow", start: 0, count: 4},
-  {topic: "Cards and Content", section: "Cards and Content", start: 4, count: 4},
-  {topic: "Chat Assistant", section: "Chat Assistant", start: 8, count: 4},
-  {topic: "Progress Tracking", section: "Progress Tracking", start: 12, count: 4},
-  {topic: "Sharing and Deployment", section: "Sharing and Deployment", start: 16, count: 4}
-];
+let allCards = [];
+let totalCards = 0;
+let selected = new Set();
+let mastery = new Map();
+let rows = [];
+let sectionRows = [];
+let total = {unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0};
 
-const totalCards = topicBlocks.reduce((sum, block) => sum + block.count, 0);
-const selected = loadSelected();
-const mastery = loadMastery();
-const rows = buildTopicRows();
-const sectionRows = buildSectionRows(rows);
-const total = sumRows(rows);
+loadAnalyticsData();
 
-document.getElementById("totalStat").textContent = total.total;
-document.getElementById("unfamiliarStat").textContent = total.unfamiliar;
-document.getElementById("somewhatStat").textContent = total.somewhat;
-document.getElementById("familiarStat").textContent = total.familiar;
-document.getElementById("masteredStat").textContent = total.mastered;
-renderTable(rows);
-renderCharts();
+async function loadAnalyticsData() {
+  try {
+    const response = await fetch("/api/deck");
+    if (!response.ok) throw new Error("Could not load flashcards.");
+    const data = await response.json();
+    configureStorageKeys(String(data.storageKey || "default"));
+    allCards = Array.isArray(data.cards) ? data.cards : [];
+    totalCards = allCards.length;
+    selected = loadSelected();
+    mastery = loadMastery();
+    rows = buildTopicRows();
+    sectionRows = buildSectionRows(rows);
+    total = sumRows(rows);
+    renderStats();
+    renderTable(rows);
+    renderCharts();
+  } catch (error) {
+    document.getElementById("offline").textContent = error.message || "Could not load analytics data.";
+  }
+}
+
+function configureStorageKeys(sourceKey) {
+  storagePrefix = `agenticFlashcards_${sourceKey.replace(/[^a-zA-Z0-9_-]/g, "_") || "default"}`;
+  OLD_STATUS_KEY = `${storagePrefix}_status_v1`;
+  MASTERY_KEY = `${storagePrefix}_mastery_v1`;
+  SELECTED_KEY = `${storagePrefix}_selected_v1`;
+  SIZE_KEY = `${storagePrefix}_size_v1`;
+}
+
+function renderStats() {
+  document.getElementById("totalStat").textContent = total.total;
+  document.getElementById("unfamiliarStat").textContent = total.unfamiliar;
+  document.getElementById("somewhatStat").textContent = total.somewhat;
+  document.getElementById("familiarStat").textContent = total.familiar;
+  document.getElementById("masteredStat").textContent = total.mastered;
+}
 
 function loadSelected() {
   const savedSize = Number(localStorage.getItem(SIZE_KEY));
@@ -271,19 +296,20 @@ function getMastery(cardIndex) {
 }
 
 function buildTopicRows() {
-  return topicBlocks.map(block => {
-    const row = {section: block.section, topic: block.topic, unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0};
-    for (let i = block.start; i < block.start + block.count; i += 1) {
-      if (!selected.has(i)) continue;
-      row.total += 1;
-      const cardStatus = getMastery(i);
-      if (cardStatus === "mastered") row.mastered += 1;
-      else if (cardStatus === "familiar") row.familiar += 1;
-      else if (cardStatus === "somewhat familiar") row.somewhat += 1;
-      else row.unfamiliar += 1;
-    }
-    return row;
-  }).filter(row => row.total > 0);
+  const map = new Map();
+  allCards.forEach((cardData, i) => {
+    if (!selected.has(i)) return;
+    const topic = cardData.topic || "General";
+    if (!map.has(topic)) map.set(topic, {section: topic, topic, unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0});
+    const row = map.get(topic);
+    row.total += 1;
+    const cardStatus = getMastery(i);
+    if (cardStatus === "mastered") row.mastered += 1;
+    else if (cardStatus === "familiar") row.familiar += 1;
+    else if (cardStatus === "somewhat familiar") row.somewhat += 1;
+    else row.unfamiliar += 1;
+  });
+  return [...map.values()];
 }
 
 function buildSectionRows(topicRows) {

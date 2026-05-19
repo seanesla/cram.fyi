@@ -1,0 +1,102 @@
+[
+  {
+    "topic": "Study Workflow",
+    "front": "What does guide order do?",
+    "back": "It keeps cards grouped in the same order as the outline on the left sidebar."
+  },
+  {
+    "topic": "Study Workflow",
+    "front": "What does shuffle do?",
+    "back": "It randomizes the deck so you see cards in a different order."
+  },
+  {
+    "topic": "Study Workflow",
+    "front": "What do the mastery levels show?",
+    "back": "They show whether a card is unfamiliar, somewhat familiar, familiar, or mastered."
+  },
+  {
+    "topic": "Study Workflow",
+    "front": "Why use queueing in the chat sidebar?",
+    "back": "So you can keep typing even while the assistant is still responding."
+  },
+  {
+    "topic": "Cards and Content",
+    "front": "What makes a good flashcard prompt?",
+    "back": "It should be short, focused, and tied to one idea."
+  },
+  {
+    "topic": "Cards and Content",
+    "front": "Why should a flashcard answer be plain language?",
+    "back": "Clear wording helps a beginner understand the idea instead of memorizing jargon."
+  },
+  {
+    "topic": "Cards and Content",
+    "front": "What is the point of rewording a card?",
+    "back": "It tests the same idea without depending on one exact sentence."
+  },
+  {
+    "topic": "Cards and Content",
+    "front": "What should you do if a card feels too broad?",
+    "back": "Split it into smaller cards that each test one idea."
+  },
+  {
+    "topic": "Chat Assistant",
+    "front": "What does the model selector control?",
+    "back": "It chooses which Codex model answers your chat messages."
+  },
+  {
+    "topic": "Chat Assistant",
+    "front": "What does reasoning effort control?",
+    "back": "It adjusts how much reasoning the model uses before answering."
+  },
+  {
+    "topic": "Chat Assistant",
+    "front": "When should you start a new chat?",
+    "back": "When you want a fresh context or the old one is getting too long."
+  },
+  {
+    "topic": "Chat Assistant",
+    "front": "What do slash commands do?",
+    "back": "They open quick actions like model selection, compaction, and chat reset."
+  },
+  {
+    "topic": "Progress Tracking",
+    "front": "What does the context meter show?",
+    "back": "An approximate share of the current thread context that is in use."
+  },
+  {
+    "topic": "Progress Tracking",
+    "front": "Why is compaction useful?",
+    "back": "It shortens the thread when it starts getting too long."
+  },
+  {
+    "topic": "Progress Tracking",
+    "front": "What does the queue counter mean?",
+    "back": "It shows how many messages are waiting to be sent."
+  },
+  {
+    "topic": "Progress Tracking",
+    "front": "Why keep chat logs after refresh?",
+    "back": "So you can keep the visible conversation without losing the thread immediately."
+  },
+  {
+    "topic": "Sharing and Deployment",
+    "front": "Why keep demo content separate from private content?",
+    "back": "So the public repo stays safe and does not expose sensitive material."
+  },
+  {
+    "topic": "Sharing and Deployment",
+    "front": "What belongs in a public app shell?",
+    "back": "The interface, behavior, and demo data that show how the app works."
+  },
+  {
+    "topic": "Sharing and Deployment",
+    "front": "What should stay private?",
+    "back": "Class notes, course files, credentials, and personal data."
+  },
+  {
+    "topic": "Sharing and Deployment",
+    "front": "What is the point of a clean public repo?",
+    "back": "It lets other people see and use the tool without seeing anything sensitive."
+  }
+]

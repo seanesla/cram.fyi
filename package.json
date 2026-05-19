@@ -2,8 +2,8 @@
   "name": "agentic-flashcards",
   "private": false,
   "scripts": {
-    "start": "node server.mjs",
-    "check": "node --check server.mjs"
+    "start": "node app/server.mjs",
+    "check": "node --check app/server.mjs"
   },
   "engines": {
     "node": ">=22"
