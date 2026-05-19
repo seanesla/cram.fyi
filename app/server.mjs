@@ -16,6 +16,9 @@ const FLASHCARDS_PATH = join(DATA_ROOT, "flashcards.json");
 const DATA_ROOT_EXISTS = await pathExists(DATA_ROOT);
 const CODEX_CWD = DATA_ROOT_EXISTS ? DATA_ROOT : REPO_ROOT;
 const CODEX_WORKSPACE_ROOTS = DATA_ROOT_EXISTS ? [REPO_ROOT, DATA_ROOT] : [REPO_ROOT];
+const REWORD_MODEL = "gpt-5.4-mini";
+const REWORD_EFFORT = "low";
+const MAX_REWORD_CONTEXT_CHARS = 1800;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -114,6 +117,43 @@ async function handleChat(req, res) {
   }
 }
 
+async function handleRewordCard(req, res) {
+  const body = await readJson(req);
+  const card = normalizeCard(body.card);
+  if (!card.front || !card.back) {
+    return sendJson(res, 400, { error: "Card front and back are required." });
+  }
+
+  const available = await codex.hasModel(REWORD_MODEL);
+  if (!available) {
+    return sendJson(res, 503, { error: `${REWORD_MODEL} is not available. Rewording was skipped.` });
+  }
+
+  const reply = await codex.askOneShot({
+    sessionId: `reword-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    model: REWORD_MODEL,
+    effort: REWORD_EFFORT,
+    summary: "none",
+    baseInstructions: buildRewordInstructions(),
+    developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
+    prompt: buildRewordPrompt(card)
+  });
+  const variants = parseRewordVariants(reply, card.front);
+  if (!variants.length) {
+    return sendJson(res, 502, { error: "Codex did not return usable variants." });
+  }
+  return sendJson(res, 200, { variants, model: REWORD_MODEL });
+}
+
+function normalizeCard(card) {
+  const value = card && typeof card === "object" ? card : {};
+  return {
+    topic: String(value.topic || "General").trim().slice(0, 160),
+    front: String(value.front || "").trim().slice(0, 1200),
+    back: String(value.back || "").trim().slice(0, 1200)
+  };
+}
+
 function sendChatEvent(res, type, value) {
   res.write(`${JSON.stringify({ type, value: String(value || "") })}\n`);
 }
@@ -150,6 +190,85 @@ function buildBaseInstructions() {
     "Active study guide:",
     studyGuide || "(Study guide could not be loaded.)"
   ].join("\n");
+}
+
+function buildRewordInstructions() {
+  return [
+    "You rewrite cram.fyi flashcard prompts.",
+    "Generate alternate questions that test the exact same answer.",
+    "Be concise, beginner-friendly, and faithful to the provided card.",
+    "Never add new facts. Never give away the answer.",
+    "Return only valid JSON shaped like {\"variants\":[\"...\",\"...\",\"...\"]}."
+  ].join("\n");
+}
+
+function buildRewordPrompt(card) {
+  const context = getStudyGuideExcerpt(card.topic);
+  return [
+    "Create 3 alternate front prompts for this flashcard.",
+    "",
+    `Topic: ${card.topic || "General"}`,
+    `Original front: ${card.front}`,
+    `Expected answer: ${card.back}`,
+    "",
+    "Relevant study guide context:",
+    context || "(No relevant study guide excerpt found.)",
+    "",
+    "Rules:",
+    "- Ask for the same answer as the original front.",
+    "- Do not include the answer or obvious answer words in the prompt.",
+    "- Do not make the prompt longer than the original unless needed for clarity.",
+    "- Use natural wording. Do not mention AI, variants, or rewording.",
+    "- Return only JSON: {\"variants\":[\"prompt 1\",\"prompt 2\",\"prompt 3\"]}"
+  ].join("\n");
+}
+
+function getStudyGuideExcerpt(topic) {
+  const guide = studyGuide.trim();
+  if (!guide) return "";
+  const cleanTopic = String(topic || "").trim().toLowerCase();
+  if (!cleanTopic) return guide.slice(0, MAX_REWORD_CONTEXT_CHARS);
+  const lines = guide.split(/\r?\n/);
+  const topicIndex = lines.findIndex(line => line.toLowerCase().includes(cleanTopic));
+  if (topicIndex === -1) return guide.slice(0, MAX_REWORD_CONTEXT_CHARS);
+  let start = topicIndex;
+  while (start > 0 && !/^#{1,6}\s+/.test(lines[start])) start -= 1;
+  if (!/^#{1,6}\s+/.test(lines[start])) start = Math.max(0, topicIndex - 4);
+  let end = topicIndex + 1;
+  while (end < lines.length && !/^#{1,6}\s+/.test(lines[end])) end += 1;
+  const excerpt = lines.slice(start, Math.min(end, start + 80)).join("\n").trim();
+  return excerpt.slice(0, MAX_REWORD_CONTEXT_CHARS);
+}
+
+function parseRewordVariants(text, originalFront) {
+  const raw = String(text || "").trim();
+  const candidates = [raw];
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidates.push(fenced[1].trim());
+  const object = raw.match(/\{[\s\S]*\}/);
+  if (object) candidates.push(object[0]);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const variants = Array.isArray(parsed.variants) ? parsed.variants : [];
+      const seen = new Set();
+      return variants
+        .map(value => String(value || "").replace(/\s+/g, " ").trim())
+        .filter(value => value && value.length <= 260)
+        .filter(value => value.toLowerCase() !== String(originalFront || "").trim().toLowerCase())
+        .filter(value => {
+          const key = value.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, 3);
+    } catch {
+      continue;
+    }
+  }
+  return [];
 }
 
 function formatError(error) {
@@ -298,13 +417,42 @@ class CodexBridge {
     }
   }
 
+  async askOneShot({ sessionId, model, effort, summary, prompt, baseInstructions, developerInstructions }) {
+    await this.ensureReady();
+    const response = await this.request("thread/start", {
+      cwd: CODEX_CWD,
+      runtimeWorkspaceRoots: CODEX_WORKSPACE_ROOTS,
+      approvalPolicy: "never",
+      sandbox: "read-only",
+      baseInstructions,
+      developerInstructions,
+      ephemeral: true,
+      experimentalRawEvents: false,
+      persistExtendedHistory: false
+    });
+    const session = { threadId: response.thread.id, active: null, tokenUsage: null, compacting: false };
+    this.sessions.set(sessionId, session);
+    try {
+      return await this.startTurn(session, {
+        model,
+        effort,
+        summary,
+        prompt,
+        onDelta: () => {},
+        onReasoningSummaryDelta: () => {}
+      });
+    } finally {
+      this.sessions.delete(sessionId);
+    }
+  }
+
   async startTurn(session, { model, effort, summary, prompt, onDelta, onReasoningSummaryDelta }) {
     let fullText = "";
     const active = {
       turnId: null,
       onDelta: chunk => {
         fullText += chunk;
-        onDelta(chunk);
+        if (onDelta) onDelta(chunk);
       },
       onReasoningSummaryDelta: onReasoningSummaryDelta || (() => {}),
       resolve: null,
@@ -373,6 +521,11 @@ class CodexBridge {
         supportedReasoningEfforts: model.supportedReasoningEfforts || []
       }))
     };
+  }
+
+  async hasModel(modelId) {
+    const { models } = await this.listModels();
+    return models.some(model => model.id === modelId || model.model === modelId);
   }
 
   async ensureReady() {
@@ -558,6 +711,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/flashcard-chat") {
       return handleChat(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/reword-card") {
+      return handleRewordCard(req, res);
     }
     if (req.method !== "GET") return sendText(res, 405, "Method not allowed");
     return serveStatic(url.pathname, res);
