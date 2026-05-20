@@ -81,6 +81,7 @@ const els = {
   totalCount: document.getElementById("totalCount"),
   undoBtn: document.getElementById("undo"),
   regenerateRewords: document.getElementById("regenerateRewords"),
+  restoreReset: document.getElementById("restoreReset"),
   toggleKnowns: document.getElementById("toggleKnowns"),
   studyGuideOrder: document.getElementById("studyGuideOrder"),
   shuffleOrder: document.getElementById("shuffleOrder"),
@@ -144,6 +145,7 @@ function render() {
   els.totalCount.textContent = selectedCards.length;
   els.toggleKnowns.textContent = state.showMastered ? "hide mastered" : "show mastered";
   els.undoBtn.disabled = state.history.length === 0;
+  els.restoreReset.classList.toggle("hidden", !hasResetBackup());
   els.studyGuideOrder.classList.toggle("active", state.orderMode === "study");
   els.shuffleOrder.classList.toggle("active", state.orderMode === "shuffle");
   els.waveNote.textContent = getQueueNote(state);
@@ -266,9 +268,65 @@ function toggleMasteredAndRender() {
 }
 
 function resetProgressAndRender() {
+  const message = "Reset all marks for this deck?\n\nThis clears your progress, but the app will save one undo-reset backup first.";
+  if (!window.confirm(message)) return;
+  saveResetBackup();
   resetStudyProgress(state, storageKeys);
   masteryEta.clear();
   rewording = createRewording();
+  render();
+}
+
+function hasResetBackup() {
+  return Boolean(localStorage.getItem(storageKeys.resetBackup));
+}
+
+function getResetBackupKeys() {
+  return [
+    storageKeys.mastery,
+    storageKeys.scheduler,
+    storageKeys.waveQueue,
+    storageKeys.position,
+    storageKeys.waveNumber,
+    storageKeys.studyStep,
+    storageKeys.masteryEtaTiming,
+    storageKeys.masteryEtaCache,
+    storageKeys.variant,
+    storageKeys.generatedVariants,
+    storageKeys.showKnowns,
+    storageKeys.orderMode
+  ];
+}
+
+function saveResetBackup() {
+  const keys = Object.fromEntries(getResetBackupKeys().map(key => [key, localStorage.getItem(key)]));
+  localStorage.setItem(storageKeys.resetBackup, JSON.stringify({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    keys
+  }));
+}
+
+function restoreResetBackupAndRender() {
+  const raw = localStorage.getItem(storageKeys.resetBackup);
+  if (!raw) return;
+
+  try {
+    const backup = JSON.parse(raw);
+    Object.entries(backup.keys || {}).forEach(([key, value]) => {
+      if (typeof key !== "string" || !key.startsWith(`${storageKeys.prefix}_`)) return;
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(value));
+    });
+  } catch {
+    window.alert("That reset backup could not be read.");
+    return;
+  }
+
+  localStorage.removeItem(storageKeys.resetBackup);
+  loadSavedStudyState();
+  rewording = createRewording();
+  rebuildQueue(state, storageKeys);
   render();
 }
 
@@ -331,6 +389,7 @@ function bindStudyEvents() {
   document.getElementById("undo").addEventListener("click", undoAndRender);
   document.getElementById("shuffle").addEventListener("click", shuffleAndRender);
   els.regenerateRewords.addEventListener("click", regenerateRewordsAndRender);
+  els.restoreReset.addEventListener("click", restoreResetBackupAndRender);
   els.shuffleOrder.addEventListener("click", shuffleAndRender);
   els.studyGuideOrder.addEventListener("click", switchToStudyOrderAndRender);
   els.toggleKnowns.addEventListener("click", toggleMasteredAndRender);

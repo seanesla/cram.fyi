@@ -16,7 +16,7 @@ export const STUDY_STORAGE_SUFFIXES = [
   "status_v1",
   "mastery_v1",
   "variant_v1",
-  "generatedVariants_v5",
+  "generatedVariants_v6",
   "showKnowns_v1",
   "position_v1",
   "orderMode_v1",
@@ -24,6 +24,7 @@ export const STUDY_STORAGE_SUFFIXES = [
   "waveQueue_v1",
   "scheduler_v1",
   "studyStep_v1",
+  "resetBackup_v1",
   "masteryEtaTiming_v1",
   "masteryEtaCache_v1"
 ];
@@ -41,13 +42,14 @@ export function createStudyStorage(sourceKey, suffixes = STUDY_STORAGE_SUFFIXES)
     selected: `${prefix}_selected_v1`,
     size: `${prefix}_size_v1`,
     variant: `${prefix}_variant_v1`,
-    generatedVariants: `${prefix}_generatedVariants_v5`,
+    generatedVariants: `${prefix}_generatedVariants_v6`,
     showKnowns: `${prefix}_showKnowns_v1`,
     position: `${prefix}_position_v1`,
     orderMode: `${prefix}_orderMode_v1`,
     waveQueue: `${prefix}_waveQueue_v1`,
     scheduler: `${prefix}_scheduler_v1`,
     studyStep: `${prefix}_studyStep_v1`,
+    resetBackup: `${prefix}_resetBackup_v1`,
     masteryEtaTiming: `${prefix}_masteryEtaTiming_v1`,
     masteryEtaCache: `${prefix}_masteryEtaCache_v1`
   };

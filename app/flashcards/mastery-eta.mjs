@@ -1,25 +1,21 @@
 import {
-  applyAnswerResult,
   getCardReason,
-  getMastery,
-  getRepeatDelay,
-  getScheduledQueuePlan
+  getMastery
 } from "./scheduler.mjs";
 
 const MAX_RECENT_EVENTS = 150;
 const RECENT_WINDOW = 30;
 const MIN_TIMING_EVENTS_FOR_MINUTES = 3;
-const MIN_ACCURACY_EVENTS_FOR_RANGE = 5;
 const IDLE_AFTER_SECONDS = 240;
 const IDLE_CLIP_SECONDS = 45;
-const SIMULATION_CAP = 20000;
-const CODEX_REFRESH_ANSWER_STEP = 4;
-const ETA_CACHE_LIMIT = 12;
+const DEFAULT_SUCCESS_RATE = 0.65;
+const MIN_SUCCESS_RATE = 0.15;
+const MAX_SUCCESS_RATE = 1;
+const WILSON_Z = 1.44;
 
 export function createMasteryEtaController({ state, getStorageKeys, element }) {
   let answerStartedAt = Date.now();
   let answerKey = "";
-  let pendingHash = "";
 
   function syncAnswerTimer() {
     const current = getCurrentEtaCard();
@@ -43,57 +39,19 @@ export function createMasteryEtaController({ state, getStorageKeys, element }) {
 
   function undoLatestAnswer() {
     undoLatestTimingEvent(getStorageKeys());
-    clearMasteryEtaCache(getStorageKeys());
   }
 
   function clear() {
     clearMasteryEtaStorage(getStorageKeys());
     answerStartedAt = Date.now();
     answerKey = "";
-    pendingHash = "";
   }
 
   function render() {
     syncAnswerTimer();
     const stats = buildMasteryEtaStats(state, getStorageKeys());
     const local = buildMathOnlyInterpretation(stats);
-    setEtaLabel(local.label, local.confidence);
-
-    if (!shouldAskCodex(stats)) return;
-
-    const packet = buildCodexStatsPacket(stats);
-    const hash = hashStatsPacket(packet);
-    const cache = loadMasteryEtaCache(getStorageKeys());
-    const cached = cache.entries[hash];
-    if (cached) {
-      setEtaLabel(cached.interpretation.label, cached.interpretation.confidence);
-      return;
-    }
-    if (!shouldRefreshCodex(stats, cache) || pendingHash === hash) return;
-
-    pendingHash = hash;
-    requestCodexInterpretation(packet, hash);
-  }
-
-  async function requestCodexInterpretation(packet, hash) {
-    try {
-      const response = await fetch("/api/mastery-eta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stats: packet })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.interpretation) return;
-      if (hashStatsPacket(buildCodexStatsPacket(buildMasteryEtaStats(state, getStorageKeys()))) !== hash) return;
-      if (data.source === "codex") {
-        saveCachedInterpretation(getStorageKeys(), hash, data.interpretation, packet);
-      }
-      setEtaLabel(data.interpretation.label, data.interpretation.confidence);
-    } catch {
-      // The local math label is already visible.
-    } finally {
-      if (pendingHash === hash) pendingHash = "";
-    }
+    setEtaLabel(local.label, local.confidenceLabel);
   }
 
   function getCurrentEtaCard() {
@@ -143,7 +101,7 @@ export function buildMasteryEtaStats(state, storageKeys) {
     ? timing.summary.known / timing.summary.answers
     : null;
   const fastestPathAnswers = calculateFastestPathAnswers(state, selectedIndexes);
-  const math = calculateMathBounds(state, selectedIndexes, {
+  const math = calculateMathBounds({
     fastestPathAnswers,
     recentAccuracy,
     historicalAccuracy,
@@ -156,8 +114,6 @@ export function buildMasteryEtaStats(state, storageKeys) {
     timing,
     recentAccuracy,
     historicalAccuracy,
-    recentMedianSeconds,
-    historicalMedianSeconds,
     math
   });
 
@@ -167,7 +123,7 @@ export function buildMasteryEtaStats(state, storageKeys) {
   else if (remainingCards === 0) status = "mastered";
 
   return {
-    version: 1,
+    version: 2,
     status,
     totalSelected,
     mastered,
@@ -175,10 +131,15 @@ export function buildMasteryEtaStats(state, storageKeys) {
     remainingCards,
     currentQueue: getCurrentQueueStats(state),
     fastestPathAnswers,
+    expectedAnswers: math.expectedAnswers,
     mathAnswerRange: math.answerRange,
     mathAnswerBounds: math.answerBounds,
     mathMinuteRange: math.minuteRange,
     mathMinuteBounds: math.minuteBounds,
+    successRate: math.successRate,
+    successRateRange: math.successRateRange,
+    confidenceScore: math.confidenceScore,
+    confidenceLabel: math.confidenceLabel,
     recentAccuracy: roundNullable(recentAccuracy, 2),
     historicalAccuracy: roundNullable(historicalAccuracy, 2),
     recentMedianSeconds: roundNullable(recentMedianSeconds, 1),
@@ -194,79 +155,34 @@ export function buildMasteryEtaStats(state, storageKeys) {
   };
 }
 
-export function buildCodexStatsPacket(stats) {
-  return {
-    version: 1,
-    totalSelected: stats.totalSelected,
-    mastered: stats.mastered,
-    tierCounts: stats.tierCounts,
-    remainingCards: stats.remainingCards,
-    currentQueue: stats.currentQueue,
-    fastestPathAnswers: stats.fastestPathAnswers,
-    mathAnswerRange: stats.mathAnswerRange,
-    mathAnswerBounds: stats.mathAnswerBounds,
-    mathMinuteRange: stats.mathMinuteRange,
-    mathMinuteBounds: stats.mathMinuteBounds,
-    recentAccuracy: stats.recentAccuracy,
-    historicalAccuracy: stats.historicalAccuracy,
-    recentMedianSeconds: stats.recentMedianSeconds,
-    historicalMedianSeconds: stats.historicalMedianSeconds,
-    recentAnswersPerMinute: stats.recentAnswersPerMinute,
-    historicalAnswersPerMinute: stats.historicalAnswersPerMinute,
-    timing: stats.timing,
-    confidenceFlags: stats.confidenceFlags
-  };
-}
-
 export function buildMathOnlyInterpretation(stats) {
   if (stats.status === "emptyDeck") {
-    return { label: "no flashcards loaded", answerRange: null, minuteRange: null, confidence: "low", reason: "No deck is loaded." };
+    return { label: "no flashcards loaded", answerRange: null, minuteRange: null, confidenceScore: 0, confidenceLabel: "low", reason: "No deck is loaded." };
   }
   if (stats.status === "noSelected") {
-    return { label: "no selected cards to master", answerRange: null, minuteRange: null, confidence: "low", reason: "No cards are selected." };
+    return { label: "no selected cards to master", answerRange: null, minuteRange: null, confidenceScore: 0, confidenceLabel: "low", reason: "No cards are selected." };
   }
   if (stats.status === "mastered") {
-    return { label: "all selected cards mastered", answerRange: { low: 0, high: 0 }, minuteRange: { low: 0, high: 0 }, confidence: "high", reason: "Every selected card is already mastered." };
-  }
-  if (stats.confidenceFlags.includes("simulationCapHit")) {
-    return {
-      label: `estimate too uncertain · fastest path: ${formatAnswerCount(stats.fastestPathAnswers)}`,
-      answerRange: { low: stats.fastestPathAnswers, high: stats.fastestPathAnswers },
-      minuteRange: null,
-      confidence: "low",
-      reason: "The local simulation hit its answer cap."
-    };
-  }
-  if (!stats.mathMinuteRange || stats.confidenceFlags.includes("tooEarly") || stats.confidenceFlags.includes("noTimingData")) {
-    return {
-      label: `answer a few more cards to estimate time · fastest path: ${formatAnswerCount(stats.fastestPathAnswers)}`,
-      answerRange: { low: stats.fastestPathAnswers, high: stats.mathAnswerRange.high || stats.fastestPathAnswers },
-      minuteRange: null,
-      confidence: "low",
-      reason: "There is not enough timing history yet."
-    };
+    return { label: "all selected cards mastered · confidence 100% · high", answerRange: { low: 0, high: 0 }, minuteRange: { low: 0, high: 0 }, confidenceScore: 100, confidenceLabel: "high", reason: "Every selected card is already mastered." };
   }
 
   const answerRange = stats.mathAnswerRange;
   const minuteRange = stats.mathMinuteRange;
-  const confidence = stats.confidenceFlags.includes("lowAccuracy") || stats.confidenceFlags.includes("unstableAccuracy")
-    ? "low"
-    : "medium";
+  const rangeText = minuteRange
+    ? `about ${formatMinuteRange(minuteRange)} · ${formatAnswerRange(answerRange)}`
+    : `${formatAnswerRange(answerRange)}`;
   return {
-    label: `about ${formatMinuteRange(minuteRange)} · ${formatAnswerRange(answerRange)}`,
+    label: `${rangeText} · confidence ${stats.confidenceScore}% · ${stats.confidenceLabel}`,
     answerRange,
     minuteRange,
-    confidence,
-    reason: "Math-only fallback from local scheduler simulation."
+    confidenceScore: stats.confidenceScore,
+    confidenceLabel: stats.confidenceLabel,
+    reason: "Local estimate from required mastery steps, observed accuracy, and observed pace."
   };
 }
 
 export function clearMasteryEtaStorage(storageKeys) {
   localStorage.removeItem(storageKeys.masteryEtaTiming);
-  localStorage.removeItem(storageKeys.masteryEtaCache);
-}
-
-export function clearMasteryEtaCache(storageKeys) {
   localStorage.removeItem(storageKeys.masteryEtaCache);
 }
 
@@ -430,153 +346,96 @@ function getCorrectStreak(state, cardIndex) {
   return Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
-function calculateMathBounds(state, selectedIndexes, timingStats) {
+export function calculateMathBounds(timingStats) {
   const fastestPathAnswers = timingStats.fastestPathAnswers;
-  if (!selectedIndexes.length || fastestPathAnswers === 0) {
+  if (fastestPathAnswers === 0) {
     return {
+      expectedAnswers: 0,
       answerRange: { low: 0, high: 0 },
       answerBounds: { lower: 0, base: 0, upper: 0 },
       minuteRange: { low: 0, high: 0 },
       minuteBounds: { lower: 0, base: 0, upper: 0 },
-      simulationCapHit: false
+      successRate: 1,
+      successRateRange: { low: 1, high: 1 },
+      confidenceScore: 100,
+      confidenceLabel: "high"
     };
   }
 
-  const enoughAccuracy = timingStats.timing.summary.answers >= MIN_ACCURACY_EVENTS_FOR_RANGE;
-  const blendedAccuracy = enoughAccuracy
-    ? blendAccuracy(timingStats.recentAccuracy, timingStats.historicalAccuracy)
-    : null;
-  const instability = getAccuracyInstability(timingStats.recentAccuracy, timingStats.historicalAccuracy);
-  const baseAccuracy = blendedAccuracy === null ? null : clamp(blendedAccuracy, 0.35, 0.98);
-  const upperAccuracy = blendedAccuracy === null
-    ? null
-    : clamp(blendedAccuracy - (instability > 0.18 ? 0.22 : 0.12), 0.2, 0.92);
-
-  const baseSimulation = baseAccuracy === null
-    ? { answers: fastestPathAnswers, capHit: false }
-    : simulateRemainingMastery(state, selectedIndexes, createAccuracyPolicy(baseAccuracy));
-  const upperSimulation = upperAccuracy === null
-    ? { answers: fastestPathAnswers, capHit: false }
-    : simulateRemainingMastery(state, selectedIndexes, createAccuracyPolicy(upperAccuracy));
-  const upperAnswers = Math.max(fastestPathAnswers, baseSimulation.answers, upperSimulation.answers);
+  const sample = buildSuccessRateSample(timingStats);
+  const successRate = sample.rate;
+  const successRateRange = sample.range;
+  const expectedAnswers = Math.max(fastestPathAnswers, Math.ceil(fastestPathAnswers / successRate));
+  const lowerAnswers = Math.max(fastestPathAnswers, Math.floor(fastestPathAnswers / successRateRange.high));
+  const upperAnswers = Math.max(expectedAnswers, Math.ceil(fastestPathAnswers / successRateRange.low));
   const answerBounds = {
-    lower: fastestPathAnswers,
-    base: Math.max(fastestPathAnswers, baseSimulation.answers),
+    lower: lowerAnswers,
+    base: expectedAnswers,
     upper: upperAnswers
   };
   const answerRange = {
     low: answerBounds.lower,
     high: answerBounds.upper
   };
+  const instability = getAccuracyInstability(timingStats.recentAccuracy, timingStats.historicalAccuracy);
   const minuteBounds = calculateMinuteBounds(answerBounds, timingStats, instability);
+  const confidenceScore = calculateConfidenceScore({
+    answers: timingStats.timing.summary.answers,
+    answerBounds,
+    minuteBounds,
+    instability,
+    successRate,
+    hasTiming: Boolean(minuteBounds),
+    idleClipped: timingStats.timing.summary.idleClipped
+  });
+
   return {
+    expectedAnswers,
     answerRange,
     answerBounds,
     minuteRange: minuteBounds ? { low: minuteBounds.lower, high: minuteBounds.upper } : null,
     minuteBounds,
-    simulationCapHit: baseSimulation.capHit || upperSimulation.capHit
+    successRate,
+    successRateRange,
+    confidenceScore,
+    confidenceLabel: getConfidenceLabel(confidenceScore)
   };
 }
 
-function simulateRemainingMastery(sourceState, selectedIndexes, answerPolicy) {
-  const state = createSimulationState(sourceState, selectedIndexes);
-  let answers = 0;
-
-  while (!allSelectedMastered(state, selectedIndexes) && answers < SIMULATION_CAP) {
-    let current = takeNextSimulationCard(state);
-    if (!current) {
-      state.waveNumber += 1;
-      refillSimulationQueue(state);
-      current = takeNextSimulationCard(state);
-      if (!current) break;
-    }
-
-    const result = answerPolicy();
-    const next = applyAnswerResult(state, current._i, result);
-    answers += 1;
-
-    if (result === "learning" && next !== "mastered") {
-      const repeatDelay = getRepeatDelay(next, state.currentQueue.length);
-      if (Number.isInteger(repeatDelay)) {
-        state.currentQueue.splice(repeatDelay, 0, { _i: current._i, waveReason: "review" });
-      }
-    }
-
-    if (!state.currentQueue.length && !allSelectedMastered(state, selectedIndexes)) {
-      state.waveNumber += 1;
-      refillSimulationQueue(state);
-    }
+function buildSuccessRateSample(timingStats) {
+  const answers = timingStats.timing.summary.answers;
+  if (answers <= 0 || !Number.isFinite(timingStats.historicalAccuracy)) {
+    return {
+      rate: DEFAULT_SUCCESS_RATE,
+      range: { low: 0.35, high: 0.9 }
+    };
   }
 
+  const historical = timingStats.historicalAccuracy;
+  const recent = Number.isFinite(timingStats.recentAccuracy) ? timingStats.recentAccuracy : historical;
+  const rate = clamp((recent * 0.65) + (historical * 0.35), MIN_SUCCESS_RATE, MAX_SUCCESS_RATE);
+  const known = Math.round(historical * answers);
+  const interval = wilsonInterval(known, answers);
+  const instability = Math.abs(recent - historical);
   return {
-    answers,
-    capHit: !allSelectedMastered(state, selectedIndexes)
-  };
-}
-
-function createSimulationState(sourceState, selectedIndexes) {
-  const selectedCards = new Set(selectedIndexes);
-  const masteryByCard = new Map();
-  sourceState.masteryByCard.forEach((value, key) => {
-    if (selectedCards.has(Number(key))) masteryByCard.set(Number(key), value);
-  });
-  const schedulerByCard = new Map();
-  sourceState.schedulerByCard.forEach((value, key) => {
-    if (!selectedCards.has(Number(key)) || !value || typeof value !== "object") return;
-    schedulerByCard.set(Number(key), { ...value });
-  });
-
-  const state = {
-    allCards: sourceState.allCards.map(() => ({})),
-    selectedCards,
-    masteryByCard,
-    schedulerByCard,
-    showMastered: false,
-    currentQueue: sourceState.currentQueue
-      .slice(sourceState.currentIndex)
-      .filter(cardData => cardData && selectedCards.has(cardData._i) && getMastery(sourceState, cardData._i) !== "mastered")
-      .map(cardData => ({ _i: cardData._i, waveReason: cardData.waveReason || "review" })),
-    sourceDeck: [],
-    currentIndex: 0,
-    orderMode: "study",
-    waveNumber: sourceState.waveNumber,
-    studyStep: sourceState.studyStep
-  };
-  if (!state.currentQueue.length) refillSimulationQueue(state);
-  return state;
-}
-
-function refillSimulationQueue(state) {
-  state.currentQueue = getScheduledQueuePlan(state)
-    .map(item => ({ _i: item.cardIndex, waveReason: item.reason }));
-  state.currentIndex = 0;
-}
-
-function takeNextSimulationCard(state) {
-  while (state.currentQueue.length) {
-    const current = state.currentQueue.shift();
-    if (!current || !state.selectedCards.has(current._i)) continue;
-    if (getMastery(state, current._i) === "mastered") continue;
-    return current;
-  }
-  return null;
-}
-
-function allSelectedMastered(state, selectedIndexes) {
-  return selectedIndexes.every(cardIndex => getMastery(state, cardIndex) === "mastered");
-}
-
-function createAccuracyPolicy(accuracy) {
-  let total = 0;
-  let known = 0;
-  return () => {
-    total += 1;
-    const targetKnown = Math.round(total * accuracy);
-    if (known < targetKnown) {
-      known += 1;
-      return "known";
+    rate,
+    range: {
+      low: clamp(interval.low - (instability * 0.35), MIN_SUCCESS_RATE, MAX_SUCCESS_RATE),
+      high: clamp(interval.high + (instability * 0.2), MIN_SUCCESS_RATE, MAX_SUCCESS_RATE)
     }
-    return "learning";
+  };
+}
+
+function wilsonInterval(successes, total) {
+  if (total <= 0) return { low: 0.35, high: 0.9 };
+  const p = successes / total;
+  const z2 = WILSON_Z ** 2;
+  const denominator = 1 + (z2 / total);
+  const center = p + (z2 / (2 * total));
+  const margin = WILSON_Z * Math.sqrt((p * (1 - p) + z2 / (4 * total)) / total);
+  return {
+    low: Math.max(0, (center - margin) / denominator),
+    high: Math.min(1, (center + margin) / denominator)
   };
 }
 
@@ -594,92 +453,45 @@ function calculateMinuteBounds(answerBounds, timingStats, instability) {
   return { lower, base, upper };
 }
 
+function calculateConfidenceScore({ answers, answerBounds, minuteBounds, instability, successRate, hasTiming, idleClipped }) {
+  const sampleScore = answers <= 0 ? 8 : Math.min(38, Math.round(38 * Math.log1p(answers) / Math.log1p(80)));
+  const answerWidth = answerBounds.upper <= 0 ? 0 : (answerBounds.upper - answerBounds.lower) / answerBounds.upper;
+  const answerScore = Math.round(34 * (1 - clamp(answerWidth, 0, 0.8) / 0.8));
+  const timeScore = hasTiming
+    ? Math.round(18 * (1 - clamp(getRangeWidth(minuteBounds), 0, 0.85) / 0.85))
+    : 5;
+  const perfectAccuracyBonus = successRate >= 0.99 && answers >= 20 ? 12 : 0;
+  const stabilityPenalty = Math.round(clamp(instability, 0, 0.45) * 45);
+  const idlePenalty = Math.min(8, idleClipped * 2);
+  return clamp(Math.round(sampleScore + answerScore + timeScore + perfectAccuracyBonus - stabilityPenalty - idlePenalty), 5, 100);
+}
+
+function getRangeWidth(range) {
+  if (!range || range.upper <= 0) return 1;
+  return (range.upper - range.lower) / range.upper;
+}
+
+function getConfidenceLabel(score) {
+  if (score >= 70) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+}
+
 function buildConfidenceFlags({
   state,
   timing,
   recentAccuracy,
   historicalAccuracy,
-  recentMedianSeconds,
-  historicalMedianSeconds,
   math
 }) {
   const flags = [];
   if (timing.summary.answers === 0) flags.push("noTimingData");
-  if (timing.summary.answers < MIN_ACCURACY_EVENTS_FOR_RANGE) flags.push("tooEarly");
-  if (!Number.isFinite(recentMedianSeconds) && !Number.isFinite(historicalMedianSeconds)) flags.push("noPaceData");
-  const blended = blendAccuracy(recentAccuracy, historicalAccuracy);
-  if (blended !== null && blended < 0.55) flags.push("lowAccuracy");
+  if (!math.minuteRange) flags.push("noPaceData");
+  if (math.successRate < 0.55) flags.push("lowAccuracy");
   if (getAccuracyInstability(recentAccuracy, historicalAccuracy) > 0.18) flags.push("unstableAccuracy");
-  if (math.simulationCapHit) flags.push("simulationCapHit");
   if (state.orderMode === "shuffle") flags.push("shuffleMode");
   if (timing.summary.idleClipped > 0) flags.push("idleClipped");
   return flags;
-}
-
-function shouldAskCodex(stats) {
-  return stats.status === "ready"
-    && stats.mathMinuteRange
-    && !stats.confidenceFlags.includes("tooEarly")
-    && stats.timing.historicalAnswers >= MIN_ACCURACY_EVENTS_FOR_RANGE
-    && !stats.confidenceFlags.includes("simulationCapHit");
-}
-
-function shouldRefreshCodex(stats, cache) {
-  const last = cache.lastRefresh;
-  if (!last) return true;
-  if (stats.totalSelected !== last.totalSelected) return true;
-  if (stats.mastered !== last.mastered) return true;
-  if (stats.fastestPathAnswers !== last.fastestPathAnswers) return true;
-  return stats.timing.historicalAnswers - last.historicalAnswers >= CODEX_REFRESH_ANSWER_STEP;
-}
-
-function loadMasteryEtaCache(storageKeys) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(storageKeys.masteryEtaCache) || "{}");
-    const entries = parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {};
-    const lastRefresh = parsed.lastRefresh && typeof parsed.lastRefresh === "object" ? parsed.lastRefresh : null;
-    return { version: 1, entries, lastRefresh };
-  } catch {
-    return { version: 1, entries: {}, lastRefresh: null };
-  }
-}
-
-function saveCachedInterpretation(storageKeys, hash, interpretation, packet) {
-  const cache = loadMasteryEtaCache(storageKeys);
-  cache.entries[hash] = {
-    interpretation,
-    createdAt: Date.now()
-  };
-  const hashes = Object.keys(cache.entries)
-    .sort((a, b) => (cache.entries[b].createdAt || 0) - (cache.entries[a].createdAt || 0));
-  hashes.slice(ETA_CACHE_LIMIT).forEach(oldHash => {
-    delete cache.entries[oldHash];
-  });
-  cache.lastRefresh = {
-    totalSelected: packet.totalSelected,
-    mastered: packet.mastered,
-    fastestPathAnswers: packet.fastestPathAnswers,
-    historicalAnswers: packet.timing.historicalAnswers
-  };
-  localStorage.setItem(storageKeys.masteryEtaCache, JSON.stringify(cache));
-}
-
-function hashStatsPacket(packet) {
-  const text = stableStringify(packet);
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16);
-}
-
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function accuracyForEvents(events) {
@@ -697,15 +509,6 @@ function medianSeconds(events, minimumCount) {
   return values.length % 2
     ? values[middle]
     : (values[middle - 1] + values[middle]) / 2;
-}
-
-function blendAccuracy(recentAccuracy, historicalAccuracy) {
-  const recent = Number.isFinite(recentAccuracy) ? recentAccuracy : null;
-  const historical = Number.isFinite(historicalAccuracy) ? historicalAccuracy : null;
-  if (recent === null && historical === null) return null;
-  if (recent === null) return historical;
-  if (historical === null) return recent;
-  return (recent * 0.65) + (historical * 0.35);
 }
 
 function getAccuracyInstability(recentAccuracy, historicalAccuracy) {
@@ -735,13 +538,31 @@ function formatAnswerCount(count) {
 function formatAnswerRange(range) {
   if (!range) return "";
   if (range.low === range.high) return formatAnswerCount(range.low);
-  return `${range.low}-${range.high} answers`;
+  return `${formatCompactNumber(range.low)}-${formatCompactNumber(range.high)} answers`;
 }
 
 function formatMinuteRange(range) {
   if (!range) return "";
-  if (range.low === range.high) return `${range.low} min`;
-  return `${range.low}-${range.high} min`;
+  if (range.low === range.high) return formatTimeValue(range.low);
+  if (range.high < 60) return `${range.low}-${range.high} min`;
+  if (range.low >= 60) return `${formatHourValue(range.low)}-${formatHourValue(range.high)} hr`;
+  return `${range.low} min-${formatHourValue(range.high)} hr`;
+}
+
+function formatTimeValue(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  return `${formatHourValue(minutes)} hr`;
+}
+
+function formatHourValue(minutes) {
+  const hours = minutes / 60;
+  return String(roundNumber(hours, hours < 10 ? 1 : 0));
+}
+
+function formatCompactNumber(value) {
+  if (value < 1000) return String(value);
+  const rounded = value < 10000 ? roundNumber(value / 1000, 1) : Math.round(value / 1000);
+  return `${rounded}k`;
 }
 
 function normalizeCount(value) {

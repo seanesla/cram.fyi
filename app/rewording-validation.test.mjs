@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseCandidateRewordFronts, parseJudgedRewordVariants } from "./rewording-validation.mjs";
+import {
+  buildRewordContract,
+  filterCandidatesByContract,
+  parseCandidateRewordFronts,
+  parseJudgedRewordVariants
+} from "./rewording-validation.mjs";
 
 test("parses candidate fronts from the generator", () => {
   const reply = JSON.stringify({
@@ -78,6 +83,60 @@ test("rejects the macroevolution term-for-definition failure case", () => {
 
   assert.deepEqual(parseJudgedRewordVariants(reply, candidates, "What is macroevolution?"), [
     "How would you define macroevolution?"
+  ]);
+});
+
+test("contract rejects reverse lookup wording for definition cards before judging", () => {
+  const contract = buildRewordContract({
+    front: "What are analogous structures?",
+    back: "Similar structures that evolved independently because of similar environments, not recent common ancestry."
+  });
+  const candidates = [
+    "In evolution, what do you call structures that look alike but did not come from a recent common ancestor?",
+    "How would you define analogous structures in evolution?"
+  ];
+
+  assert.deepEqual(contract, {
+    version: 1,
+    answerKind: "definition",
+    protectedAnchors: ["analogous structures"],
+    mustKeepAnchor: true,
+    forbiddenAnswerSeeking: true
+  });
+  assert.deepEqual(filterCandidatesByContract(candidates, contract), [
+    "How would you define analogous structures in evolution?"
+  ]);
+});
+
+test("contract rejects missing anchors for biogeography definition cards", () => {
+  const contract = buildRewordContract({
+    front: "What is biogeography?",
+    back: "Study of where organisms live and how those patterns reveal evolutionary history."
+  });
+  const candidates = [
+    "How does the study of where species live help explain their evolutionary past?",
+    "What does biogeography study?"
+  ];
+
+  assert.deepEqual(filterCandidatesByContract(candidates, contract), [
+    "What does biogeography study?"
+  ]);
+});
+
+test("contract preserves criterion card anchors", () => {
+  const contract = buildRewordContract({
+    front: "What does the biological species concept use to define a species?",
+    back: "Reproduction: members can mate and produce fertile offspring."
+  });
+  const candidates = [
+    "Why is reproduction important to defining species?",
+    "What criterion does the biological species concept use to define a species?"
+  ];
+
+  assert.equal(contract.answerKind, "criterion");
+  assert.deepEqual(contract.protectedAnchors, ["biological species concept"]);
+  assert.deepEqual(filterCandidatesByContract(candidates, contract), [
+    "What criterion does the biological species concept use to define a species?"
   ]);
 });
 
