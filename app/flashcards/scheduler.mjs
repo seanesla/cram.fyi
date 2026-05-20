@@ -87,6 +87,7 @@ export function loadCurrentQueue(state, storageKeys) {
     const valid = raw
       .filter(i => Number.isInteger(i) && i >= 0 && i < state.allCards.length)
       .filter(i => state.selectedCards.has(i))
+      .filter(i => !state.focusCardIndexes || state.focusCardIndexes.has(i))
       .filter(i => state.showMastered || getMastery(state, i) !== "mastered");
     return valid.map(i => makeScheduledCard(state, i));
   } catch {
@@ -113,6 +114,7 @@ export function getActiveCards(state) {
   return state.allCards
     .map((cardData, i) => ({ ...cardData, _i: i }))
     .filter(cardData => state.selectedCards.has(cardData._i))
+    .filter(cardData => !state.focusCardIndexes || state.focusCardIndexes.has(cardData._i))
     .filter(cardData => state.showMastered || getMastery(state, cardData._i) !== "mastered")
     .sort((a, b) => a._i - b._i);
 }

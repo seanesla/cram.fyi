@@ -26,25 +26,46 @@
     <span><span id="leftCount">0</span> active</span>
     <span><span id="totalCount">0</span> total</span>
   </div>
+  <div class="mode study-mode" aria-label="Study mode">
+    <button class="active" id="masteryMode">mastery mode</button>
+    <button id="browseMode">browse mode</button>
+  </div>
   <div class="mode" aria-label="Card order">
     <button class="active" id="studyGuideOrder">guide order</button>
     <button id="shuffleOrder">shuffle</button>
   </div>
+  <div class="mode browse-bookmark-filter hidden" aria-label="Browse bookmark filter">
+    <button class="active" id="browseAllCards">all cards</button>
+    <button id="browseBookmarkedOnly">bookmarked only <span id="bookmarkCount">0</span></button>
+  </div>
+  <fieldset class="question-types hidden" aria-label="Question types">
+    <legend>question types</legend>
+    <label><input type="checkbox" value="flashcard" checked> flashcards</label>
+    <label><input type="checkbox" value="multiple-choice"> multiple choice</label>
+    <label><input type="checkbox" value="true-false"> true/false</label>
+    <label><input type="checkbox" value="select-all"> select all</label>
+  </fieldset>
   <div class="wave-note" id="waveNote"></div>
   <div class="mastery-eta" id="masteryEta"></div>
 
   <div class="card-wrap" id="cardWrap">
+    <button class="bookmark-card hidden" id="bookmarkCard" type="button" aria-pressed="false" title="Bookmark this card">☆</button>
     <div class="card" id="card">
       <div class="face front">
         <div class="label">Question</div>
         <div class="topic" id="frontTopic"></div>
         <div id="frontText"></div>
+        <form class="question-form hidden" id="questionForm">
+          <div class="choice-list" id="choiceList"></div>
+          <button type="submit" id="submitQuestion">check</button>
+        </form>
         <div class="status hidden" id="frontStatus"></div>
       </div>
       <div class="face back">
         <div class="label">Answer</div>
         <div class="topic" id="backTopic"></div>
         <div id="backText"></div>
+        <div class="question-feedback hidden" id="questionFeedback"></div>
         <div class="status hidden" id="backStatus"></div>
       </div>
     </div>
@@ -55,10 +76,11 @@
     <button class="btn-learning" id="markLearning" title="Left arrow">&larr; still learning</button>
     <button id="flip" title="Spacebar">flip</button>
     <button class="btn-known" id="markKnown" title="Right arrow">got it &rarr;</button>
+    <button class="hidden" id="continuePractice">continue</button>
   </div>
   <div class="secondary">
     <button id="undo" title="U key">undo</button>
-    <button id="shuffle">shuffle</button>
+    <a class="hidden" href="supplements.html" id="supplementsLink">supplements</a>
     <button id="regenerateRewords">regenerate rewords</button>
     <button id="toggleKnowns" title="K key">show mastered</button>
     <button class="hidden" id="restoreReset">undo reset</button>

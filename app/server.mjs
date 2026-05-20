@@ -9,6 +9,11 @@ import {
   parseCandidateRewordFronts,
   parseJudgedRewordVariants
 } from "./rewording-validation.mjs";
+import {
+  PRACTICE_QUESTION_TYPES,
+  parsePracticeQuestion,
+  parsePracticeQuestionJudgment
+} from "./practice-question-validation.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const START_PORT = Number(process.env.PORT || 5174);
@@ -19,6 +24,8 @@ const { dataRoot: DATA_ROOT, dataLabel: DATA_LABEL } = resolveDataRoot();
 const DATA_KEY = DATA_LABEL.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "default";
 const STUDY_GUIDE_PATH = join(DATA_ROOT, "study-guide.md");
 const FLASHCARDS_PATH = join(DATA_ROOT, "flashcards.json");
+const SUPPLEMENTS_ROOT = join(DATA_ROOT, "supplements");
+const SUPPLEMENTS_INDEX_PATH = join(SUPPLEMENTS_ROOT, "index.json");
 const DATA_ROOT_EXISTS = await pathExists(DATA_ROOT);
 const CODEX_CWD = DATA_ROOT_EXISTS ? DATA_ROOT : REPO_ROOT;
 const CODEX_WORKSPACE_ROOTS = DATA_ROOT_EXISTS ? [REPO_ROOT, DATA_ROOT] : [REPO_ROOT];
@@ -36,6 +43,7 @@ const MIME = {
 
 const studyGuide = await readStudyGuide();
 const flashcards = await loadFlashcards();
+const supplements = await loadSupplements();
 
 async function readStudyGuide() {
   const primary = await readFile(STUDY_GUIDE_PATH, "utf8").catch(() => "");
@@ -91,6 +99,50 @@ async function loadFlashcards() {
       .filter(card => card.front && card.back);
   } catch {
     return [];
+  }
+}
+
+async function loadSupplements() {
+  const raw = await readFile(SUPPLEMENTS_INDEX_PATH, "utf8").catch(() => "");
+  if (!raw.trim()) return [];
+  try {
+    const items = JSON.parse(raw);
+    if (!Array.isArray(items)) return [];
+    return items.map(normalizeSupplementItem).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeSupplementItem(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = String(item.id || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+  const file = String(item.file || `${id}.json`).trim();
+  const normalizedFile = normalize(file);
+  if (!id || !file.endsWith(".json") || normalizedFile.includes("..")) return null;
+  return {
+    id,
+    title: String(item.title || id).trim().slice(0, 140),
+    description: String(item.description || "").trim().slice(0, 280),
+    kind: String(item.kind || "cards").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "cards",
+    file
+  };
+}
+
+async function readSupplement(id) {
+  const item = supplements.find(supplement => supplement.id === id);
+  if (!item) return null;
+  const root = normalize(SUPPLEMENTS_ROOT);
+  const target = normalize(join(SUPPLEMENTS_ROOT, item.file));
+  if (target !== root && !target.startsWith(`${root}/`)) return null;
+  const raw = await readFile(target, "utf8").catch(() => "");
+  if (!raw.trim()) return null;
+  try {
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    return { item, data };
+  } catch {
+    return null;
   }
 }
 
@@ -165,6 +217,52 @@ async function handleRewordCard(req, res) {
     return sendJson(res, 502, { error: "Codex did not approve any safe variants." });
   }
   return sendJson(res, 200, { variants, model: REWORD_MODEL });
+}
+
+async function handlePracticeQuestion(req, res) {
+  const body = await readJson(req);
+  const card = normalizeCard(body.card);
+  const type = String(body.type || "").trim();
+  if (!PRACTICE_QUESTION_TYPES.includes(type)) {
+    return sendJson(res, 400, { error: "Unsupported question type." });
+  }
+  if (!card.front || !card.back) {
+    return sendJson(res, 400, { error: "Card front and back are required." });
+  }
+
+  const available = await codex.hasModel(REWORD_MODEL);
+  if (!available) {
+    return sendJson(res, 503, { error: `${REWORD_MODEL} is not available. Practice question generation was skipped.` });
+  }
+
+  const questionReply = await codex.askOneShot({
+    sessionId: `practice-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    model: REWORD_MODEL,
+    effort: REWORD_EFFORT,
+    summary: "none",
+    baseInstructions: buildPracticeQuestionInstructions(),
+    developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
+    prompt: buildPracticeQuestionPrompt(card, type)
+  });
+  const question = parsePracticeQuestion(questionReply);
+  if (!question) {
+    return sendJson(res, 502, { error: "Codex did not return a usable practice question." });
+  }
+
+  const judgeReply = await codex.askOneShot({
+    sessionId: `practice-judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    model: REWORD_MODEL,
+    effort: REWORD_EFFORT,
+    summary: "none",
+    baseInstructions: buildPracticeQuestionJudgeInstructions(),
+    developerInstructions: "Return only JSON. Do not run tools. Do not browse. Do not edit files.",
+    prompt: buildPracticeQuestionJudgePrompt(card, question)
+  });
+  if (!parsePracticeQuestionJudgment(judgeReply, question)) {
+    return sendJson(res, 502, { error: "Codex did not approve the generated practice question." });
+  }
+
+  return sendJson(res, 200, { question, model: REWORD_MODEL });
 }
 
 function normalizeCard(card) {
@@ -298,6 +396,83 @@ function buildRewordJudgePrompt(card, candidates, contract) {
     "- Do not invent new fronts. Copy each candidate front exactly into its judgment.",
     "- Return one judgment per candidate.",
     "- Return only JSON: {\"judgments\":[{\"front\":\"candidate front\",\"fixedBackStillAnswers\":false,\"answerTargetChanged\":true,\"fullCreditWithFixedBack\":false,\"reason\":\"short reason\"}]}"
+  ].join("\n");
+}
+
+function buildPracticeQuestionInstructions() {
+  return [
+    "You create one beginner-friendly practice question for cram.fyi from an existing flashcard.",
+    "Use the original flashcard and the active study guide as the only source of truth.",
+    "Do not add facts that are not supported by the card or study guide.",
+    "Keep the same answer target as the original flashcard.",
+    "Wrong choices must be plausible but clearly wrong.",
+    "Return only valid JSON shaped like {\"type\":\"multiple-choice\",\"prompt\":\"...\",\"choices\":[{\"id\":\"a\",\"text\":\"...\"}],\"correctChoiceIds\":[\"a\"],\"explanation\":\"...\"}."
+  ].join("\n");
+}
+
+function buildPracticeQuestionPrompt(card, type) {
+  const typeRules = {
+    "multiple-choice": [
+      "Create exactly 4 choices.",
+      "Exactly 1 choice must be correct.",
+      "The correct choice should be the unchanged fixed back answer, or a very close wording of it if the fixed back is too long."
+    ],
+    "true-false": [
+      "Create exactly 2 choices: True and False.",
+      "The prompt must be a single statement that is clearly true or clearly false.",
+      "Exactly 1 choice must be correct."
+    ],
+    "select-all": [
+      "Create 4 to 6 choices.",
+      "At least 2 choices must be correct, and at least 1 choice must be incorrect.",
+      "The prompt must clearly say select all that apply."
+    ]
+  };
+  return [
+    `Create one ${type} question for this flashcard.`,
+    "",
+    `Topic: ${card.topic || "General"}`,
+    `Original front: ${card.front}`,
+    `Fixed back answer: ${card.back}`,
+    "",
+    "Relevant study-guide excerpt:",
+    getStudyGuideExcerpt(card.topic) || "(No matching study-guide excerpt was found.)",
+    "",
+    "Rules:",
+    ...typeRules[type].map(rule => `- ${rule}`),
+    "- Use stable lowercase ids such as a, b, c, d, e, f.",
+    "- Do not make any choice 'all of the above' or 'none of the above'.",
+    "- Do not mention this prompt, JSON, or the original flashcard.",
+    "- Keep wording direct for a beginner.",
+    "- Return only JSON."
+  ].join("\n");
+}
+
+function buildPracticeQuestionJudgeInstructions() {
+  return [
+    "You are a strict practice-question safety judge for cram.fyi.",
+    "Decide whether the generated question is supported by the flashcard and active study guide.",
+    "Reject if the question changes the answer target, adds unsupported facts, has ambiguous choices, or marks the wrong answer correct.",
+    "Reject if a beginner could reasonably choose more or fewer correct answers than the key says.",
+    "Return only JSON shaped like {\"supportedByCard\":true,\"answerableWithStudyContext\":true,\"correctAnswersValid\":true,\"distractorsPlausible\":true,\"beginnerSafe\":true,\"ambiguous\":false,\"reason\":\"...\"}."
+  ].join("\n");
+}
+
+function buildPracticeQuestionJudgePrompt(card, question) {
+  return [
+    "Judge this generated practice question.",
+    "",
+    `Topic: ${card.topic || "General"}`,
+    `Original front: ${card.front}`,
+    `Fixed back answer: ${card.back}`,
+    "",
+    "Relevant study-guide excerpt:",
+    getStudyGuideExcerpt(card.topic) || "(No matching study-guide excerpt was found.)",
+    "",
+    "Generated question:",
+    JSON.stringify(question, null, 2),
+    "",
+    "Return JSON only."
   ].join("\n");
 }
 
@@ -759,6 +934,13 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/study-guide") {
       return sendJson(res, 200, { markdown: studyGuide, dataSource: DATA_LABEL, storageKey: DATA_KEY });
     }
+    if (req.method === "GET" && url.pathname === "/api/supplements") {
+      return sendJson(res, 200, { items: supplements, dataSource: DATA_LABEL, storageKey: DATA_KEY });
+    }
+    if (req.method === "GET" && url.pathname === "/api/supplement") {
+      const supplement = await readSupplement(String(url.searchParams.get("id") || ""));
+      return sendJson(res, supplement ? 200 : 404, supplement || { error: "Supplement not found." });
+    }
     if (req.method === "GET" && url.pathname === "/api/codex-status") {
       return sendJson(res, 200, await codex.status());
     }
@@ -782,6 +964,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/reword-card") {
       return handleRewordCard(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/practice-question") {
+      return handlePracticeQuestion(req, res);
     }
     if (req.method !== "GET") return sendText(res, 405, "Method not allowed");
     return serveStatic(url.pathname, res);

@@ -1,0 +1,203 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body {
+  min-height: 100vh;
+  background: #101418;
+  color: #eef3f7;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.supp-page {
+  width: min(1180px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 18px 0 30px;
+}
+.supp-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+.supp-header a,
+.supp-item {
+  border: 1px solid #34404d;
+  border-radius: 8px;
+  background: #182028;
+  color: #cbd6e1;
+  text-decoration: none;
+}
+.supp-header a {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+}
+.supp-header p,
+.eyebrow {
+  color: #8bd3ff;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+h1 {
+  margin-top: 2px;
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  line-height: 1.1;
+}
+h2 { color: #ffffff; font-size: 1.08rem; }
+.supp-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.supp-item {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.supp-item:hover,
+.supp-item.active {
+  border-color: #8bd3ff;
+  background: #223244;
+}
+.supp-item span {
+  color: #8bd3ff;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.supp-item strong { color: #ffffff; }
+.supp-item small { color: #9da8b3; line-height: 1.35; }
+.supp-view,
+.panel,
+.node-card,
+.info-card {
+  border: 1px solid #34404d;
+  border-radius: 8px;
+  background: #151c24;
+}
+.supp-view {
+  padding: 14px;
+}
+.view-head {
+  margin-bottom: 8px;
+}
+.source-note,
+.empty-note {
+  color: #9da8b3;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.source-note { margin-bottom: 12px; }
+.panel {
+  margin-top: 12px;
+  padding: 12px;
+}
+.rank-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.rank-strip span {
+  min-width: 0;
+  border: 1px solid #34404d;
+  border-radius: 6px;
+  background: #101418;
+  color: #d8e1ea;
+  padding: 8px 6px;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.hierarchy-grid,
+.child-grid,
+.card-grid {
+  display: grid;
+  gap: 10px;
+}
+.hierarchy-grid {
+  grid-template-columns: 1fr;
+}
+.child-grid {
+  margin-top: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 10px;
+}
+.node-card,
+.info-card {
+  min-width: 0;
+  padding: 11px;
+  background: #101820;
+}
+.node-card.depth-1 { border-color: rgba(139, 211, 255, 0.38); }
+.node-card.depth-2 { border-color: rgba(255, 207, 112, 0.38); }
+.node-card.depth-3 { border-color: rgba(126, 231, 135, 0.32); }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(139, 211, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(139, 211, 255, 0.08);
+  color: #edf3f8;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.badge em {
+  color: #8bd3ff;
+  font-style: normal;
+  font-weight: 800;
+}
+.node-card p,
+.info-card p {
+  margin-top: 8px;
+  color: #d8e1ea;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.examples {
+  margin-top: 8px;
+  color: #aeb8c3;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.examples strong,
+.info-card strong {
+  color: #ffffff;
+}
+.node-card ul,
+.simple-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+  padding-left: 18px;
+  color: #d8e1ea;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+.info-card > span {
+  display: block;
+  margin-top: 4px;
+  color: #d8e1ea;
+  font-size: 0.84rem;
+}
+.info-card div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.hidden { display: none !important; }
+@media (max-width: 760px) {
+  .supp-page { width: min(100% - 20px, 720px); padding-top: 12px; }
+  .supp-header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .supp-header a { text-align: center; }
+}

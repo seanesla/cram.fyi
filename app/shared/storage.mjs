@@ -26,7 +26,16 @@ export const STUDY_STORAGE_SUFFIXES = [
   "studyStep_v1",
   "resetBackup_v1",
   "masteryEtaTiming_v1",
-  "masteryEtaCache_v1"
+  "masteryEtaCache_v1",
+  "questionTypes_v1",
+  "practiceQuestions_v1",
+  "studyMode_v1",
+  "focus_v1",
+  "browseOrder_v1",
+  "browsePosition_v1",
+  "browseQueue_v1",
+  "bookmarks_v1",
+  "browseBookmarkOnly_v1"
 ];
 
 export function createStudyStorage(sourceKey, suffixes = STUDY_STORAGE_SUFFIXES) {
@@ -51,7 +60,16 @@ export function createStudyStorage(sourceKey, suffixes = STUDY_STORAGE_SUFFIXES)
     studyStep: `${prefix}_studyStep_v1`,
     resetBackup: `${prefix}_resetBackup_v1`,
     masteryEtaTiming: `${prefix}_masteryEtaTiming_v1`,
-    masteryEtaCache: `${prefix}_masteryEtaCache_v1`
+    masteryEtaCache: `${prefix}_masteryEtaCache_v1`,
+    questionTypes: `${prefix}_questionTypes_v1`,
+    practiceQuestions: `${prefix}_practiceQuestions_v1`,
+    studyMode: `${prefix}_studyMode_v1`,
+    focus: `${prefix}_focus_v1`,
+    browseOrder: `${prefix}_browseOrder_v1`,
+    browsePosition: `${prefix}_browsePosition_v1`,
+    browseQueue: `${prefix}_browseQueue_v1`,
+    bookmarks: `${prefix}_bookmarks_v1`,
+    browseBookmarkOnly: `${prefix}_browseBookmarkOnly_v1`
   };
 }
 

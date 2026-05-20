@@ -115,6 +115,33 @@
     font-size: 0.9rem;
     line-height: 1.4;
   }
+  body {
+    background: #000;
+    color: #f2f2f2;
+  }
+  .stat,
+  .chart-panel,
+  .table-panel,
+  a,
+  button {
+    border-color: #242424;
+    background: #050505;
+  }
+  a:hover,
+  button:hover {
+    border-color: #6d6d6d;
+    background: #111;
+  }
+  h1,
+  .stat-label,
+  th,
+  .muted {
+    color: #9a9a9a;
+  }
+  th,
+  td {
+    border-bottom-color: #242424;
+  }
   @media (max-width: 760px) {
     header { align-items: flex-start; flex-direction: column; }
     .stats, .chart-grid { grid-template-columns: 1fr; }

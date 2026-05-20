@@ -68,6 +68,15 @@ users can also keep class files outside the repo and start the app with `npm sta
 
 `quizzes/` is for generated local self-quizzes. keep quiz files inside the selected class, exam, unit, or topic folder so they stay private.
 
+`supplements/` is for optional private study aids that are specific to a selected class, exam, unit, or topic. examples include taxonomy maps, concept maps, comparison charts, timelines, and lab-specific review pages. keep the public app renderer generic; the biology/history/chemistry-specific words and data belong in the selected class folder, not in `app/` or `examples/`.
+
+recommended class-level supplement layout:
+
+- `supplements/index.json`
+- `supplements/<supplement-id>.json`
+
+the public app may render these files, but it should not hard-code private course topics like exam names, phyla, lecture examples, or class-specific terminology.
+
 ## agent behavior
 
 - keep the app usable without private data by preserving demo mode.
@@ -78,6 +87,7 @@ users can also keep class files outside the repo and start the app with `npm sta
 - treat selected class data as read-only study context unless the user asks to create, update, organize, or move local class files.
 - when creating flashcards, use the selected class folder as context and write/update `flashcards.json` only when the user asks.
 - when creating quizzes, write them into the most specific matching private folder, such as `classes/<course-name>/exams/<exam-name>/quizzes/`, unless the user gives a different local private path.
+- when creating supplemental study tools, write them into the selected private class folder under `supplements/` or the most specific matching private exam/unit/topic folder. do not put course-specific supplement content in `app/` or `examples/`.
 - treat `study-guide.md` as the source of truth for testable material when it exists. use slides, transcripts, notes, labs, and prior quizzes as supporting context.
 - do not edit, copy, summarize, or publish private class files unless the user explicitly asks for local-only study work.
 - before committing or pushing, scan for accidental class content and private paths.

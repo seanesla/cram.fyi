@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>supplements - cram.fyi</title>
+<link rel="stylesheet" href="supplements.css">
+</head>
+<body>
+<main class="supp-page">
+  <header class="supp-header">
+    <a href="flashcards.html">back to flashcards</a>
+    <div>
+      <p>active study extras</p>
+      <h1 id="title">Supplements</h1>
+    </div>
+  </header>
+
+  <section class="supp-list" id="suppList" aria-label="Available supplements"></section>
+
+  <section class="supp-view hidden" id="suppView" aria-live="polite">
+    <div class="view-head">
+      <p class="eyebrow" id="kindLabel">supplement</p>
+      <h2 id="viewTitle">Select a supplement</h2>
+    </div>
+    <p class="source-note" id="sourceNote"></p>
+    <div id="viewBody"></div>
+  </section>
+
+  <p class="empty-note" id="emptyNote">Loading supplements...</p>
+</main>
+
+<script type="module" src="supplements.mjs"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { escapeHtml } from "./shared/html.mjs";
 import { createStudyStorage, getMastery, loadMasteryMap, loadSelectedCards } from "./shared/storage.mjs";
+import { buildStudyGuideModel } from "./shared/study-guide-model.mjs";
 
 let storageKeys = createStudyStorage("examples", [
   "status_v1",
@@ -14,15 +15,20 @@ let selected = new Set();
 let mastery = new Map();
 let rows = [];
 let sectionRows = [];
+let guideModel = null;
 let total = {unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0};
 
 loadAnalyticsData();
 
 async function loadAnalyticsData() {
   try {
-    const response = await fetch("/api/deck");
+    const [response, guideResponse] = await Promise.all([
+      fetch("/api/deck"),
+      fetch("/api/study-guide")
+    ]);
     if (!response.ok) throw new Error("Could not load flashcards.");
     const data = await response.json();
+    const guideData = guideResponse.ok ? await guideResponse.json() : { markdown: "" };
     storageKeys = createStudyStorage(String(data.storageKey || "default"), [
       "status_v1",
       "mastery_v1",
@@ -30,6 +36,7 @@ async function loadAnalyticsData() {
       "size_v1"
     ]);
     allCards = Array.isArray(data.cards) ? data.cards : [];
+    guideModel = buildStudyGuideModel(String(guideData.markdown || ""), allCards);
     totalCards = allCards.length;
     selected = loadSelectedCards(storageKeys, totalCards);
     mastery = loadMasteryMap(storageKeys, totalCards);
@@ -57,7 +64,8 @@ function buildTopicRows() {
   allCards.forEach((cardData, i) => {
     if (!selected.has(i)) return;
     const topic = cardData.topic || "General";
-    if (!map.has(topic)) map.set(topic, {section: topic, topic, unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0});
+    const section = guideModel?.topicMap?.get(topic)?.section?.title || topic;
+    if (!map.has(topic)) map.set(topic, {section, topic, unfamiliar: 0, somewhat: 0, familiar: 0, mastered: 0, total: 0});
     const row = map.get(topic);
     row.total += 1;
     const cardStatus = getMastery(mastery, i);

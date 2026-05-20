@@ -290,6 +290,7 @@ function normalizeTimingSummary(summary) {
 function getSelectedIndexes(state) {
   return [...state.selectedCards]
     .filter(i => Number.isInteger(i) && i >= 0 && i < state.allCards.length)
+    .filter(i => !state.focusCardIndexes || state.focusCardIndexes.has(i))
     .sort((a, b) => a - b);
 }
 
@@ -320,6 +321,7 @@ function getCurrentQueueStats(state) {
   };
   state.currentQueue.slice(state.currentIndex).forEach(cardData => {
     if (!cardData || !state.selectedCards.has(cardData._i) || getMastery(state, cardData._i) === "mastered") return;
+    if (state.focusCardIndexes && !state.focusCardIndexes.has(cardData._i)) return;
     const reason = cardData.waveReason || getCardReason(state, cardData._i);
     stats.remainingInQueue += 1;
     if (reason === "new") stats.new += 1;

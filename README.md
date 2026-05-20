@@ -30,6 +30,7 @@ if rewording is slow, you may briefly see `rewording...`. ideally, the app prefe
 
 - `app/flashcards.html` - the main flashcard study UI
 - `app/analytics.html` - progress charts and mastery views
+- `app/supplements.html` - optional private study aids rendered from the active class folder
 - `app/server.mjs` - the local server that loads your deck and connects to Codex through your ChatGPT login
 - `examples/` - safe demo study content
 - `AGENTS.md` - instructions that tell Codex how to work safely in this repo
@@ -87,6 +88,9 @@ cram.fyi/
           lecture_transcripts/
           labs/
           quizzes/
+      supplements/
+        index.json
+        taxonomy-map.json
 ```
 
 then start that class deck:
@@ -119,6 +123,7 @@ it can also include organized class context so Codex can make better cards and q
 - `exams/exam-4/labs/`
 - `exams/exam-4/notes/`
 - `exams/exam-4/quizzes/`
+- `supplements/` for private class-specific study tools like concept maps, taxonomy maps, comparison charts, and timelines
 
 if the material is not tied to one exam, use course-level folders like `lecture_slides/`, `lecture_transcripts/`, `labs/`, `notes/`, or `quizzes/`.
 
@@ -142,6 +147,7 @@ if the material is not tied to one exam, use course-level folders like `lecture_
 4. run `npm start -- --class <course-name>`.
 5. study cards in the browser; cram.fyi will mix new cards, review cards, and spaced repeats.
 6. ask Codex to generate practice quizzes inside the matching class, exam, or unit folder.
+7. ask Codex to add private supplemental study tools under `classes/<course-name>/supplements/` when a topic needs a map, chart, or other visual review aid.
 
 ## codex agent instructions
 
@@ -155,6 +161,7 @@ the important rules:
 - treat `study-guide.md` as the source of truth for testable material.
 - only create or update `flashcards.json` when you ask Codex to do that.
 - put generated quizzes inside the most specific matching private folder, like `classes/<course-name>/exams/exam-4/quizzes/`.
+- put class-specific supplemental study tools in private folders like `classes/<course-name>/supplements/`; keep `app/` generic.
 - before committing or pushing, check that no private class material is included.
 
 ## privacy note
